@@ -8,7 +8,7 @@
 
 ## Reporting a vulnerability
 
-If you discover a security vulnerability in arq-signals, please report it
+If you discover a security vulnerability in Arq Signals, please report it
 responsibly:
 
 1. **Do not** open a public GitHub issue
@@ -23,7 +23,7 @@ responsibly:
 
 ### PostgreSQL connections
 
-arq-signals enforces read-only access through three independent layers:
+Arq Signals enforces read-only access through three independent layers:
 
 1. **Static linting**: All SQL queries are validated at startup. DDL, DML, and
    dangerous functions cause the process to abort immediately.
@@ -41,7 +41,7 @@ arq-signals enforces read-only access through three independent layers:
 ### Network
 
 - The HTTP API binds to a configurable address (default `127.0.0.1:8081`)
-- arq-signals makes no outbound network connections except to PostgreSQL targets
+- Arq Signals makes no outbound network connections except to PostgreSQL targets
 - No data is sent to external services, AI providers, or analytics platforms
 
 ### Data handling

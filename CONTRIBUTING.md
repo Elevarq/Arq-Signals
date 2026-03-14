@@ -1,10 +1,10 @@
-# Contributing to arq-signals
+# Contributing to Arq Signals
 
-Thank you for your interest in contributing to arq-signals.
+Thank you for your interest in contributing to Arq Signals.
 
 ## Scope
 
-arq-signals is the open-source PostgreSQL diagnostic signal collector. It
+Arq Signals is the open-source PostgreSQL diagnostic signal collector. It
 collects data. It does not analyze, score, or interpret data. Contributions
 must stay within this boundary.
 
@@ -30,7 +30,7 @@ Open an issue on GitHub with:
 - What you expected to happen
 - What actually happened
 - Steps to reproduce
-- PostgreSQL version and arq-signals version
+- PostgreSQL version and Arq Signals version
 
 ### Submitting changes
 
@@ -82,5 +82,5 @@ dangerous functions. This is intentional — all collectors must be read-only.
 
 ## License
 
-By contributing to arq-signals, you agree that your contributions will be
+By contributing to Arq Signals, you agree that your contributions will be
 licensed under the BSD-3-Clause license.

@@ -1,4 +1,4 @@
-# Acceptance Tests: arq-signals
+# Acceptance Tests: Arq Signals
 
 ## TC-SIG-001: PostgreSQL Connection
 
@@ -96,8 +96,8 @@ stats_snapshots, requirement_catalog, reports, environment_profiles
 ## TC-SIG-010: No Analyzer Modules Linked
 
 **Linked Rules:** ARQ-SIGNALS-R007
-**Scenario:** Inspect arq-signals Go imports
-**Inputs:** All .go files in arq-signals repository
+**Scenario:** Inspect Arq Signals Go imports
+**Inputs:** All .go files in Arq Signals repository
 **Expected Behavior:** No file imports any of: requirements, scoring, stats,
 report, llm, doctor, analyzer packages. `go vet ./...` passes.
 
@@ -107,7 +107,7 @@ report, llm, doctor, analyzer packages. `go vet ./...` passes.
 
 **Linked Rules:** ARQ-SIGNALS-R007, ARQ-SIGNALS-R008
 **Scenario:** Search codebase for LLM-related code
-**Inputs:** All .go files in arq-signals repository
+**Inputs:** All .go files in Arq Signals repository
 **Expected Behavior:** No references to: Unix domain socket LLM client,
 LLM prompt construction, report generation, stub_llm, UDSClient.
 No `llm` package directory exists.
@@ -118,7 +118,7 @@ No `llm` package directory exists.
 
 **Linked Rules:** ARQ-SIGNALS-R007
 **Scenario:** Search codebase for scoring/recommendation code
-**Inputs:** All .go files in arq-signals repository
+**Inputs:** All .go files in Arq Signals repository
 **Expected Behavior:** No references to: ComputeScore, grade bands,
 RequirementDef, RunAll (requirements), TopRisk, CategoryBreakdown.
 No `scoring` or `requirements` package directories exist.
@@ -129,7 +129,7 @@ No `scoring` or `requirements` package directories exist.
 
 **Linked Rules:** ARQ-SIGNALS-R008
 **Scenario:** Inspect all network-related code
-**Inputs:** All .go files in arq-signals repository
+**Inputs:** All .go files in Arq Signals repository
 **Expected Behavior:** No HTTP client calls to AI services. No UDS socket
 connections for LLM. Only network calls are: PostgreSQL connections (pgx)
 and the local HTTP API server.
@@ -140,7 +140,7 @@ and the local HTTP API server.
 
 **Linked Rules:** ARQ-SIGNALS-R009
 **Scenario:** Scan repository for proprietary content
-**Inputs:** All files in arq-signals repository
+**Inputs:** All files in Arq Signals repository
 **Expected Behavior:** BSD-3-Clause LICENSE file exists. No proprietary
 prompts, scoring algorithms, or analysis logic. No credentials, API keys,
 or internal endpoints. CONTRIBUTING.md and SECURITY.md exist.
@@ -160,7 +160,7 @@ or internal endpoints. CONTRIBUTING.md and SECURITY.md exist.
 
 **Linked Rules:** ARQ-SIGNALS-R011
 **Scenario:** GET /health on running signals server
-**Inputs:** Running arq-signals process
+**Inputs:** Running Arq Signals process
 **Expected Behavior:** Returns HTTP 200 with no authentication required
 
 ---
@@ -169,7 +169,7 @@ or internal endpoints. CONTRIBUTING.md and SECURITY.md exist.
 
 **Linked Rules:** ARQ-SIGNALS-R011
 **Scenario:** GET /status with valid bearer token
-**Inputs:** Running arq-signals with configured target
+**Inputs:** Running Arq Signals with configured target
 **Expected Behavior:** Returns JSON with target info, collection state,
 recent errors. Does NOT include scoring, grades, or report data.
 

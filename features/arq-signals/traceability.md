@@ -1,4 +1,4 @@
-# Traceability Matrix: arq-signals
+# Traceability Matrix: Arq Signals
 
 ## Legend
 

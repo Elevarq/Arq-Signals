@@ -30,7 +30,7 @@ type Deps struct {
 	Targets   []config.TargetConfig
 }
 
-// Server is the arq-signals HTTP API server.
+// Server is the Arq Signals HTTP API server.
 type Server struct {
 	httpServer *http.Server
 	deps       *Deps

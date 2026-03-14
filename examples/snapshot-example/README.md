@@ -1,4 +1,4 @@
-This directory shows the structure of an arq-signals snapshot. In practice, snapshots are delivered as ZIP archives. This expanded view is for reference.
+This directory shows the structure of an Arq Signals snapshot. In practice, snapshots are delivered as ZIP archives. This expanded view is for reference.
 
 ## Files
 

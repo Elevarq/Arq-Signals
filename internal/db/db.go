@@ -15,7 +15,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// DB wraps a sql.DB with arq-signals-specific operations.
+// DB wraps a sql.DB with Arq Signals-specific operations.
 type DB struct {
 	sql *sql.DB
 }

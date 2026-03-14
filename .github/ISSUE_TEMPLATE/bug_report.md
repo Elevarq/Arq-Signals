@@ -1,6 +1,6 @@
 ---
 name: Bug Report
-about: Report a bug in arq-signals
+about: Report a bug in Arq Signals
 title: ""
 labels: bug
 assignees: ""
@@ -8,7 +8,7 @@ assignees: ""
 
 ## Environment
 
-- **arq-signals version:**
+- **Arq Signals version:**
 - **PostgreSQL version:**
 - **OS / platform:**
 - **Deployment method:** (binary / Docker / source)

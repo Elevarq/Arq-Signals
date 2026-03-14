@@ -1,9 +1,9 @@
-# arq-signals
+# Arq Signals
 
-Lightweight, read-only PostgreSQL diagnostic collector. Runs on your
-infrastructure, collects statistics from your databases, and packages
-them as portable snapshots. No data leaves your machine. No AI. No
-cloud. Just structured evidence from the views PostgreSQL already
+Arq Signals is a read-only PostgreSQL diagnostic collector. It runs on
+your infrastructure, collects statistics from your databases, and
+packages them as portable snapshots. No data leaves your machine. No AI.
+No cloud. Just structured evidence from the views PostgreSQL already
 exposes.
 
 [![CI](https://github.com/elevarq/arq-signals/actions/workflows/ci.yml/badge.svg)](https://github.com/elevarq/arq-signals/actions/workflows/ci.yml)
@@ -18,7 +18,7 @@ exposes.
 > **No cloud, no phone-home** — all data stays on your machine. No
 > telemetry, no analytics, no external network calls.
 >
-> **No AI inside** — arq-signals is a pure data collector. No language
+> **No AI inside** — Arq Signals is a pure data collector. No language
 > models, no scoring, no recommendations. What you collect is what you get.
 >
 > **Built for restricted environments** — runs airgapped, as a non-root
@@ -35,7 +35,7 @@ cd arq-signals
 docker compose -f examples/docker-compose.yml up -d
 ```
 
-This starts arq-signals alongside PostgreSQL 16 with a pre-configured
+This starts Arq Signals alongside PostgreSQL 16 with a pre-configured
 monitoring role. Collection begins automatically.
 
 ```bash
@@ -57,23 +57,23 @@ for what the output looks like.
 
 ---
 
-## Why arq-signals exists
+## Why Arq Signals exists
 
 Every PostgreSQL instance exposes diagnostic data through built-in
 statistics views. But collecting this data consistently, safely, and in
 a format you can actually use takes tooling that most teams end up
 building themselves.
 
-arq-signals handles the collection part so you don't have to. It
+Arq Signals handles the collection part so you don't have to. It
 connects with a read-only role, runs approved SQL queries on a schedule,
 and writes structured results to local storage. When you need the data
 elsewhere, it packages everything as a portable ZIP snapshot.
 
 The project is open source because we think data collection should be
-transparent. You can read every SQL query arq-signals will run. You can
+transparent. You can read every SQL query Arq Signals will run. You can
 audit the binary. You own the output.
 
-## What arq-signals does
+## What Arq Signals does
 
 - Connects to one or more PostgreSQL instances (14+)
 - Executes a versioned catalog of read-only SQL collectors
@@ -83,9 +83,9 @@ audit the binary. You own the output.
 - Exposes a local HTTP API for triggering collection and exports
 - Provides a CLI (`arqctl`) for operations
 
-## What arq-signals does NOT do
+## What Arq Signals does NOT do
 
-arq-signals is a collector, not an analyzer. It produces raw diagnostic
+Arq Signals is a collector, not an analyzer. It produces raw diagnostic
 evidence and stops there.
 
 - **No analysis** — does not interpret, score, or grade your database
@@ -96,7 +96,7 @@ evidence and stops there.
 - **No write operations** — enforces read-only access at three
   independent layers
 
-If you want automated analysis and reporting on top of arq-signals
+If you want automated analysis and reporting on top of Arq Signals
 snapshots, see [Compatibility with Arq Analyzer](#compatibility-with-arq-analyzer)
 below.
 
@@ -140,7 +140,7 @@ annotated configuration file.
 
 ### PostgreSQL setup
 
-arq-signals needs a monitoring role with read access to statistics views:
+Arq Signals needs a monitoring role with read access to statistics views:
 
 ```sql
 CREATE ROLE arq_monitor WITH LOGIN PASSWORD 'choose_a_strong_password';
@@ -150,7 +150,7 @@ GRANT pg_monitor TO arq_monitor;
 CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
 ```
 
-## Using arq-signals
+## Using Arq Signals
 
 ### Trigger a collection
 
@@ -182,7 +182,7 @@ arqctl status
 
 ## Snapshot format
 
-arq-signals produces snapshots in the `arq-snapshot.v1` format:
+Arq Signals produces snapshots in the `arq-snapshot.v1` format:
 
 ```
 snapshot.zip
@@ -215,7 +215,7 @@ The format is versioned. Breaking changes will bump `schema_version`.
 
 A complete example snapshot is available at
 [`examples/snapshot-example/`](examples/snapshot-example/) — you can
-inspect exactly what arq-signals collects without running it.
+inspect exactly what Arq Signals collects without running it.
 
 ## Collected signals
 
@@ -264,7 +264,7 @@ random token is generated at startup and logged.
 
 ### Role safety validation (fail-closed)
 
-Before collecting from any target, arq-signals validates the connected
+Before collecting from any target, Arq Signals validates the connected
 role's safety posture. Collection is **blocked** if the role has:
 
 - Superuser privileges (`rolsuper=true`)
@@ -288,20 +288,20 @@ details.
 
 ### Network
 
-- arq-signals makes **no outbound network connections** except to your
+- Arq Signals makes **no outbound network connections** except to your
   PostgreSQL targets
 - No telemetry, no analytics, no phone-home
 - The HTTP API binds to loopback by default (`127.0.0.1:8081`)
 
 ### Container hardening
 
-When deployed via Docker, arq-signals runs as a non-root user
+When deployed via Docker, Arq Signals runs as a non-root user
 (UID 10001) on a minimal Alpine base with no shell in the production
 image.
 
 ## Configuration reference
 
-arq-signals reads configuration from (in order):
+Arq Signals reads configuration from (in order):
 1. `--config` flag
 2. `/etc/arq/signals.yaml`
 3. `./signals.yaml`
@@ -338,20 +338,20 @@ annotated example.
 
 ## Compatibility with Arq Analyzer
 
-arq-signals snapshots are designed to be consumed by
+Arq Signals snapshots are designed to be consumed by
 [Arq Analyzer](https://elevarq.com/analyzer), a separate product that
 performs automated analysis, scoring, and LLM-powered reporting. The
 snapshot format (`arq-snapshot.v1`) is the stable contract between
 collector and analyzer.
 
-**arq-signals is fully usable on its own.** You do not need Arq Analyzer
+**Arq Signals is fully usable on its own.** You do not need Arq Analyzer
 to collect, export, or inspect your PostgreSQL diagnostics. Many teams
-use arq-signals purely for data collection, feeding the snapshots into
+use Arq Signals purely for data collection, feeding the snapshots into
 their own tooling or analysis workflows.
 
 ## Project status
 
-arq-signals is in **early release** (v0.1.0). The collection engine,
+Arq Signals is in **early release** (v0.1.0). The collection engine,
 safety model, and snapshot format are stable and tested (94 automated
 tests). The snapshot format is versioned and will maintain backward
 compatibility.

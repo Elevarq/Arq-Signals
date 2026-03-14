@@ -2,7 +2,7 @@
 
 ## Project ownership
 
-arq-signals is maintained by [Elevarq](https://elevarq.com). The project is
+Arq Signals is maintained by [Elevarq](https://elevarq.com). The project is
 open source under the BSD-3-Clause license.
 
 ## Decision making
@@ -19,7 +19,7 @@ Community input is welcome via GitHub issues and pull requests.
 
 ## Scope boundary
 
-arq-signals is strictly a diagnostic signal collector. It does not perform
+Arq Signals is strictly a diagnostic signal collector. It does not perform
 analysis, scoring, or AI-powered interpretation. Contributions that cross
 this boundary will be redirected to the appropriate repository.
 

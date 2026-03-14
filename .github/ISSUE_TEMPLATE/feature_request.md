@@ -1,6 +1,6 @@
 ---
 name: Feature Request
-about: Suggest a new feature or improvement for arq-signals
+about: Suggest a new feature or improvement for Arq Signals
 title: ""
 labels: enhancement
 assignees: ""
@@ -20,4 +20,4 @@ If you have ideas about how this could be implemented, describe them here.
 
 ## Scope
 
-> **Note:** arq-signals is a diagnostic signal collector. Features related to analysis, scoring, recommendations, or AI/ML are out of scope for this project and will be closed. If your request falls in that category, consider opening it against the appropriate project instead.
+> **Note:** Arq Signals is a diagnostic signal collector. Features related to analysis, scoring, recommendations, or AI/ML are out of scope for this project and will be closed. If your request falls in that category, consider opening it against the appropriate project instead.

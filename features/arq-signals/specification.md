@@ -1,8 +1,8 @@
-# Feature Specification: arq-signals
+# Feature Specification: Arq Signals
 
 ## Purpose
 
-arq-signals is the open-source PostgreSQL diagnostic signal collector. It
+Arq Signals is the open-source PostgreSQL diagnostic signal collector. It
 connects to PostgreSQL instances, executes approved read-only SQL collectors,
 produces structured snapshots of diagnostic data, and packages them for
 transfer or storage. It contains no analysis, scoring, recommendations, or
@@ -89,7 +89,7 @@ query_catalog.json, query_runs.ndjson, and query_results.ndjson.
 ### Safety
 
 **ARQ-SIGNALS-R007**: The system shall not perform scoring, recommendations,
-root-cause analysis, or LLM interaction. No package in the arq-signals
+root-cause analysis, or LLM interaction. No package in the Arq Signals
 repository shall import or depend on modules that implement these functions.
 
 **ARQ-SIGNALS-R008**: The system shall operate without network calls to
@@ -97,7 +97,7 @@ external AI services. No HTTP client, Unix domain socket client, or other
 transport for LLM communication shall be present in the codebase.
 
 **ARQ-SIGNALS-R009**: The system shall be suitable for open-source release
-under the BSD-3-Clause license. The repository shall contain no proprietary
+under the BSD-3-Clause license. The Arq Signals repository shall contain no proprietary
 analysis logic, no proprietary prompts, no confidential content, and no credentials.
 
 ### Interface
@@ -191,7 +191,7 @@ checks listed.
 - **INV-SIGNALS-03**: The snapshot format is a stable contract. Breaking
   changes require a new version suffix (e.g. `_v2`).
 - **INV-SIGNALS-04**: No proprietary prompts, scoring models, or analysis
-  algorithms shall exist anywhere in the arq-signals repository.
+  algorithms shall exist anywhere in the Arq Signals repository.
 - **INV-SIGNALS-05**: Collection evidence must only be gathered under
   safety-constrained execution. No collector query shall execute outside a
   verified read-only session.

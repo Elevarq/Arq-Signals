@@ -1,6 +1,6 @@
 package snapshot
 
-// SchemaVersion identifies the format version of exported arq-signals snapshots.
+// SchemaVersion identifies the format version of exported Arq Signals snapshots.
 const SchemaVersion = "arq-snapshot.v1"
 
 // Metadata describes the collector and collection context for an export.

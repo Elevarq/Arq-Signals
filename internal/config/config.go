@@ -10,7 +10,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Config is the top-level configuration for arq-signals.
+// Config is the top-level configuration for Arq Signals.
 type Config struct {
 	Env                string         `yaml:"env"` // "dev" (default), "lab", "prod"
 	AllowInsecurePgTLS bool           `yaml:"-"`   // env-only via ARQ_ALLOW_INSECURE_PG_TLS

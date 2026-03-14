@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to arq-signals will be documented in this file.
+All notable changes to Arq Signals will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/).
 
@@ -8,7 +8,7 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- Initial open-source release of arq-signals
+- Initial open-source release of Arq Signals
 - PostgreSQL diagnostic signal collector with 12 versioned SQL collectors
 - Read-only enforcement at three independent layers (static linter, session-level, per-query transaction)
 - Cadence-based scheduling (5m, 15m, 1h, 6h, 24h, 7d)

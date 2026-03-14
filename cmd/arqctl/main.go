@@ -21,11 +21,11 @@ var (
 func main() {
 	root := &cobra.Command{
 		Use:   "arqctl",
-		Short: "CLI for arq-signals",
+		Short: "CLI for Arq Signals",
 	}
 
 	defaultToken := os.Getenv("ARQ_SIGNALS_API_TOKEN")
-	root.PersistentFlags().StringVar(&apiAddr, "api-addr", "http://127.0.0.1:8081", "arq-signals API address")
+	root.PersistentFlags().StringVar(&apiAddr, "api-addr", "http://127.0.0.1:8081", "Arq Signals API address")
 	root.PersistentFlags().StringVar(&apiToken, "api-token", defaultToken, "API bearer token (default: $ARQ_SIGNALS_API_TOKEN)")
 
 	root.AddCommand(versionCmd())

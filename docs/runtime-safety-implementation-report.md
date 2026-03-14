@@ -5,7 +5,7 @@ Generated: 2026-03-14
 ## Summary
 
 Implemented fail-closed runtime safety enforcement for PostgreSQL
-role validation and session posture in arq-signals. Collection is now
+role validation and session posture in Arq Signals. Collection is now
 blocked by default when the connected role has unsafe attributes.
 
 ## Test Results

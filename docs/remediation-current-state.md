@@ -15,7 +15,7 @@ that same connection/transaction.
 ## CRITICAL: STDD artifacts not in repository
 
 The STDD artifacts exist at `/Users/frankheikens/Projects/elevarq/arq/features/arq-signals/`
-which is **outside** the arq-signals repository root. The repo at
+which is **outside** the Arq Signals repository root. The repo at
 `repo-split/arq-signals/` has no `features/` directory. Any CI or
 contributor clone would not have these files.
 

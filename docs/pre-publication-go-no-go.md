@@ -1,7 +1,7 @@
 # Pre-Publication Go/No-Go Report
 
 **Date:** 2026-03-14
-**Repository:** arq-signals
+**Repository:** Arq Signals
 **Version:** v0.1.0
 
 ---

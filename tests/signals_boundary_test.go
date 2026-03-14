@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// repoRoot returns the absolute path to the arq-signals repository root.
+// repoRoot returns the absolute path to the Arq Signals repository root.
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	// Walk up from the test file location to find go.mod.
@@ -51,7 +51,7 @@ func allGoFiles(t *testing.T, root string) []string {
 	return files
 }
 
-// TestNoAnalyzerImports verifies that no .go file in arq-signals imports
+// TestNoAnalyzerImports verifies that no .go file in Arq Signals imports
 // packages that belong to the analyzer product boundary.
 // Traces: ARQ-SIGNALS-R007, ARQ-SIGNALS-R008, ARQ-SIGNALS-R009 / TC-SIG-010, TC-SIG-011
 func TestNoAnalyzerImports(t *testing.T) {
@@ -94,7 +94,7 @@ func TestNoAnalyzerImports(t *testing.T) {
 }
 
 // TestNoLLMCode scans all non-test .go files for strings that would
-// indicate LLM/report integration code has leaked into arq-signals.
+// indicate LLM/report integration code has leaked into Arq Signals.
 // Traces: ARQ-SIGNALS-R007 / TC-SIG-012
 func TestNoLLMCode(t *testing.T) {
 	root := repoRoot(t)
@@ -127,7 +127,7 @@ func TestNoLLMCode(t *testing.T) {
 }
 
 // TestNoScoringCode scans all non-test .go files for strings that would
-// indicate scoring/analysis code has leaked into arq-signals.
+// indicate scoring/analysis code has leaked into Arq Signals.
 // Traces: ARQ-SIGNALS-R008 / TC-SIG-013
 func TestNoScoringCode(t *testing.T) {
 	root := repoRoot(t)

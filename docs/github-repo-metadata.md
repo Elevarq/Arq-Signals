@@ -1,6 +1,6 @@
 # GitHub Repository Metadata
 
-Recommended settings for the arq-signals GitHub repository to maximize
+Recommended settings for the Arq Signals GitHub repository to maximize
 discoverability and trust.
 
 ## Repository settings
@@ -59,7 +59,7 @@ golang
 If creating a social preview image, the message should be:
 
 ```
-arq-signals
+Arq Signals
 Read-only PostgreSQL diagnostic collector
 No AI · No cloud · Every query visible in source
 BSD-3-Clause
@@ -96,7 +96,7 @@ Create these labels for community engagement:
   contributions and should be clearly welcoming.
 
 - **`wontfix`**: Apply to requests for analysis, scoring, AI, or
-  recommendation features. Link to the "What arq-signals does NOT do"
+  recommendation features. Link to the "What Arq Signals does NOT do"
   section and redirect to Arq Analyzer if appropriate.
 
 ## Pinned sections in README
