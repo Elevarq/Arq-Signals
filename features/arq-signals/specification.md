@@ -291,6 +291,40 @@ the statistics reset timestamp. When pg_stat_statements or
 pg_stat_statements_info is unavailable, this collector shall be
 gracefully skipped.
 
+### Server Survival Pack
+
+**ARQ-SIGNALS-R049**: The system shall collect replication slot status
+including retained WAL size and active/inactive state. When no
+replication slots are configured, the collector shall return an empty
+result without error.
+
+**ARQ-SIGNALS-R050**: The system shall collect replication status
+including connected replicas, lag indicators, and sync state. When no
+replicas are connected, the collector shall return an empty result
+without error.
+
+**ARQ-SIGNALS-R051**: On PostgreSQL 17 and later, the system shall
+collect checkpoint statistics from pg_stat_checkpointer. On earlier
+versions, this collector shall be gracefully skipped.
+
+**ARQ-SIGNALS-R052**: The system shall collect a high-signal vacuum
+health diagnostic that includes dead tuple percentage, XID freeze age,
+autovacuum configuration overrides, and vacuum/analyze recency. This
+collector adds operator-oriented context beyond raw table statistics.
+
+**ARQ-SIGNALS-R053**: The system shall collect an actionable list of
+backends in idle-in-transaction state, including PID, user, application,
+transaction age, and a truncated query snippet.
+
+**ARQ-SIGNALS-R054**: The system shall collect all database sizes for
+growth monitoring and disk-risk triage.
+
+**ARQ-SIGNALS-R055**: The system shall collect the largest user relations
+by disk size to support storage triage.
+
+**ARQ-SIGNALS-R056**: The system shall collect per-database temporary
+file and byte usage to detect work_mem exhaustion pressure.
+
 ### Persistence
 
 **ARQ-SIGNALS-R036**: The system shall persist collected data locally so that
@@ -356,11 +390,12 @@ above must be maintained.
 |--------|-------|
 | COVERED | 39 |
 | PARTIALLY COVERED | 0 |
-| UNCOVERED | 9 |
+| UNCOVERED | 17 |
 
-39 of 48 requirements are covered by automated tests. R040-R048
-(diagnostic pack 1) are covered by registration and linting tests;
-full behavioral coverage requires live PostgreSQL.
+39 of 56 requirements are covered by automated tests. R040-R056
+(diagnostic packs 1 and 2) are covered by registration, linting,
+version-gating, and safety tests; full behavioral coverage of query
+execution requires live PostgreSQL.
 
 ## Traceability Notes
 

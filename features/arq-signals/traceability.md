@@ -56,3 +56,11 @@
 | R046 | Connection utilization | TC-SIG-047 | COVERED | BEHAVIORAL | Registered, passes linter |
 | R047 | Planner stats staleness | TC-SIG-047 | COVERED | BEHAVIORAL | Registered, passes linter |
 | R048 | pg_stat_statements reset check | TC-SIG-047 | COVERED | BEHAVIORAL | Registered, requires extension, gracefully skipped when absent |
+| R049 | Replication slot risk | TC-SIG-048 | COVERED | BEHAVIORAL | Registered, no extension required, graceful empty result when no slots |
+| R050 | Replication status/lag | TC-SIG-048 | COVERED | BEHAVIORAL | Registered, graceful empty result when no replicas |
+| R051 | Checkpointer stats (PG 17+) | TC-SIG-048 | COVERED | BEHAVIORAL | Registered, MinPGVersion=17 verified, excluded on PG 16 |
+| R052 | Vacuum health diagnostic | TC-SIG-048 | COVERED | BEHAVIORAL | Registered, includes dead_pct/xid_age/reloptions, adds value over raw stats |
+| R053 | Idle-in-transaction offenders | TC-SIG-048 | COVERED | BEHAVIORAL | Registered, filters for idle-in-txn state, excludes own PID |
+| R054 | Database sizes | TC-SIG-048 | COVERED | BEHAVIORAL | Registered, passes linter |
+| R055 | Largest relations | TC-SIG-048 | COVERED | BEHAVIORAL | Registered, passes linter |
+| R056 | Temp I/O pressure | TC-SIG-048 | COVERED | BEHAVIORAL | Registered, passes linter, no secrets |

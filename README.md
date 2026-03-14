@@ -300,6 +300,14 @@ inspect exactly what Arq Signals collects without running it.
 | `connection_utilization_v1` | `pg_stat_activity` | 5m | Connection counts vs max_connections |
 | `planner_stats_staleness_v1` | `pg_stat_user_tables` + `pg_class` | 1h | Estimate drift and modifications since analyze |
 | `pgss_reset_check_v1` | `pg_stat_statements_info` | 1h | Statistics reset timestamp (requires extension, PG 14+) |
+| `replication_slots_risk_v1` | `pg_replication_slots` | 5m | Stale/inactive slots, retained WAL (empty when no slots) |
+| `replication_status_v1` | `pg_stat_replication` | 5m | Replica lag and sync state (empty when standalone) |
+| `checkpointer_stats_v1` | `pg_stat_checkpointer` | 15m | Checkpoint stats (PG 17+ only, complements bgwriter) |
+| `vacuum_health_v1` | `pg_stat_user_tables` + `pg_class` | 15m | Dead tuple pressure, overdue vacuum, XID freeze age |
+| `idle_in_txn_offenders_v1` | `pg_stat_activity` | 5m | Idle-in-transaction backends holding locks |
+| `database_sizes_v1` | `pg_database` | 1h | All database sizes for growth monitoring |
+| `largest_relations_v1` | `pg_stat_user_tables` | 1h | Top 30 relations by disk size |
+| `temp_io_pressure_v1` | `pg_stat_database` | 15m | Per-database temp file usage |
 
 Every query is visible in
 [`internal/pgqueries/`](internal/pgqueries/).
