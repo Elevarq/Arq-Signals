@@ -233,6 +233,24 @@ fields defined in Appendix A, section "Export metadata schema." When unsafe
 mode is active, the metadata shall include `unsafe_mode: true` and
 `unsafe_reasons` listing the specific bypassed checks.
 
+### Version-Sensitive Collectors
+
+**ARQ-SIGNALS-R037**: For diagnostic views whose schema varies across
+PostgreSQL or extension versions (such as pg_stat_statements), the
+collector shall capture the complete returned row shape dynamically.
+Each row shall be serialized using the actual column names returned by
+PostgreSQL at runtime. The collector shall not depend on a fixed column
+list or fixed column positions for these views.
+
+**ARQ-SIGNALS-R038**: If a version-sensitive collector query fails (e.g.
+due to a missing or renamed column), the failure shall be isolated to
+that query. Other collector queries in the same collection cycle shall
+continue executing and producing results.
+
+**ARQ-SIGNALS-R039**: Dynamic capture shall not weaken the read-only
+safety model, credential handling guarantees, or export format
+conventions.
+
 ### Persistence
 
 **ARQ-SIGNALS-R036**: The system shall persist collected data locally so that
@@ -296,11 +314,11 @@ above must be maintained.
 
 | Status | Count |
 |--------|-------|
-| COVERED | 36 |
+| COVERED | 39 |
 | PARTIALLY COVERED | 0 |
 | UNCOVERED | 0 |
 
-All 36 requirements are covered by automated tests.
+All 39 requirements are covered by automated tests.
 
 ## Traceability Notes
 

@@ -458,3 +458,39 @@ superuser attribute (rolsuper=true)")
 **Inputs:** Retention configured to 1 day; data collected 2 days ago
 **Expected Behavior:** Old data is removed after a collection cycle.
 Recent data is preserved.
+
+---
+
+## TC-SIG-044: Dynamic Column Capture for pg_stat_statements
+
+**Linked Rules:** ARQ-SIGNALS-R037
+**Scenario:** Collect pg_stat_statements from a PostgreSQL version that
+exposes additional or renamed columns
+**Inputs:** PostgreSQL instance with pg_stat_statements installed
+**Expected Behavior:** The collector captures all columns returned by the
+view at runtime. The resulting NDJSON payload uses the actual column
+names as JSON keys. No fixed column assumption causes the query to fail.
+
+---
+
+## TC-SIG-045: Query Failure Isolation
+
+**Linked Rules:** ARQ-SIGNALS-R038
+**Scenario:** One collector query fails (e.g. column not found) while
+others succeed
+**Inputs:** A collection cycle where one query returns an error
+**Expected Behavior:** The failing query is recorded with an error. All
+other queries in the cycle execute successfully and produce results. The
+collection cycle completes and persists the successful results.
+
+---
+
+## TC-SIG-046: Dynamic Capture Preserves Safety Model
+
+**Linked Rules:** ARQ-SIGNALS-R039
+**Scenario:** Verify that dynamic column capture does not introduce
+write operations, credential leaks, or safety regressions
+**Inputs:** Collection with dynamic pg_stat_statements query
+**Expected Behavior:** The query runs inside a READ ONLY transaction.
+The query passes the static linter. No credentials appear in the
+output. The collector's safety model is unchanged.

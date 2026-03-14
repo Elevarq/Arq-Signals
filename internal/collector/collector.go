@@ -358,10 +358,22 @@ func (c *Collector) collectTarget(ctx context.Context, tgt config.TargetConfig, 
 		qCtx, qCancel := context.WithTimeout(ctx, qTimeout)
 		start := time.Now()
 
+		// Use a savepoint so a single query failure does not abort
+		// the entire READ ONLY transaction (PostgreSQL marks the
+		// transaction as aborted after any error).
+		savepointName := fmt.Sprintf("arq_q_%d", len(runs))
+		tx.Exec(ctx, "SAVEPOINT "+savepointName)
+
 		rows, qErr := queryToMaps(qCtx, tx, q.SQL)
 		elapsed := time.Since(start)
 		qTimedOut := qCtx.Err() == context.DeadlineExceeded
 		qCancel()
+
+		if qErr != nil {
+			// Roll back to the savepoint to recover the transaction.
+			tx.Exec(ctx, "ROLLBACK TO SAVEPOINT "+savepointName)
+		}
+		tx.Exec(ctx, "RELEASE SAVEPOINT "+savepointName)
 
 		runID := ulid.MustNew(ulid.Timestamp(now), c.entropy).String()
 

@@ -44,3 +44,6 @@
 | R034 | Commit failure blocks persistence | TC-SIG-036 | COVERED | STRUCTURAL | Commit error checked; return precedes downstream persistence |
 | R035 | Export metadata contract | TC-SIG-042 | COVERED | BEHAVIORAL | Export metadata contains unsafe_mode and dynamic bypass reasons |
 | R036 | Persistence guarantees | TC-SIG-043 | COVERED | BEHAVIORAL | Migration creates tables; instance ID stable; retention cleanup; batch insert atomic |
+| R037 | Dynamic column capture for version-sensitive views | TC-SIG-044 | COVERED | BEHAVIORAL | pg_stat_statements uses SELECT *; linter accepts; NDJSON preserves all dynamic columns including future/renamed ones |
+| R038 | Query failure isolation | TC-SIG-045 | COVERED | BEHAVIORAL + STRUCTURAL | Savepoint isolation in collector; ROLLBACK TO SAVEPOINT on failure; transaction not aborted |
+| R039 | Dynamic capture preserves safety model | TC-SIG-046 | COVERED | BEHAVIORAL | Dynamic query passes linter; no write keywords; extension gating preserved |

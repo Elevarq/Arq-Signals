@@ -107,16 +107,16 @@ func init() {
 		Timeout:        10 * time.Second,
 	})
 
+	// pg_stat_statements uses SELECT * for cross-version compatibility.
+	// The view schema varies across PostgreSQL and extension versions
+	// (e.g. blk_read_time was renamed to shared_blk_read_time in PG 17).
+	// The collector captures whatever columns the installed version
+	// exposes and serializes them dynamically using actual column names.
 	Register(QueryDef{
 		ID:                "pg_stat_statements_v1",
 		Category:          "extensions",
 		RequiresExtension: "pg_stat_statements",
-		SQL: `SELECT userid, dbid, queryid, calls,
-		total_exec_time, min_exec_time, max_exec_time, mean_exec_time,
-		stddev_exec_time, rows, shared_blks_hit, shared_blks_read,
-		shared_blks_dirtied, shared_blks_written, local_blks_hit,
-		local_blks_read, local_blks_dirtied, local_blks_written,
-		temp_blks_read, temp_blks_written, blk_read_time, blk_write_time
+		SQL: `SELECT *
 		FROM pg_stat_statements
 		ORDER BY total_exec_time DESC
 		LIMIT 100`,

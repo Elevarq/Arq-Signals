@@ -48,3 +48,12 @@ the role has superuser, replication, or bypass RLS privileges. Create a
 dedicated monitoring role with `pg_monitor` instead. An explicit
 override (`ARQ_SIGNALS_ALLOW_UNSAFE_ROLE=true`) exists for lab/dev use
 but is not recommended for production.
+
+## Does pg_stat_statements work across PostgreSQL versions?
+
+Yes. The `pg_stat_statements` collector uses dynamic column capture
+(`SELECT *`) so it adapts to whatever columns the installed extension
+version exposes. This avoids failures caused by columns renamed or
+added between PostgreSQL releases (e.g. `blk_read_time` was renamed
+to `shared_blk_read_time` in PostgreSQL 17). If the extension is not
+installed, the collector is silently skipped.

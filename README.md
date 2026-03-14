@@ -287,7 +287,7 @@ inspect exactly what Arq Signals collects without running it.
 | `pg_stat_user_indexes_v1` | `pg_stat_user_indexes` | 15m | Index usage stats |
 | `pg_statio_user_tables_v1` | `pg_statio_user_tables` | 15m | Table I/O stats |
 | `pg_statio_user_indexes_v1` | `pg_statio_user_indexes` | 15m | Index I/O stats |
-| `pg_stat_statements_v1` | `pg_stat_statements` | 15m | Query statistics (requires extension) |
+| `pg_stat_statements_v1` | `pg_stat_statements` | 15m | Query statistics (requires extension, dynamic columns) |
 | `wraparound_db_level_v1` | `pg_database` | 15m | Transaction ID age by database |
 | `wraparound_rel_level_v1` | `pg_class` | 15m | Transaction ID age by table |
 | `wraparound_blockers_v1` | `pg_stat_activity` | 5m | Long-running transactions blocking wraparound |
