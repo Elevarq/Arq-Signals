@@ -354,3 +354,14 @@ unsafe_mode=true and lists bypassed checks
 **Scenario:** Role has both superuser and replication attributes
 **Inputs:** rolsuper=true, rolreplication=true
 **Expected Behavior:** Error message lists all failing attributes
+
+---
+
+## TC-SIG-036: Commit Failure Blocks Downstream Persistence
+
+**Linked Rules:** ARQ-SIGNALS-R021
+**Scenario:** PostgreSQL transaction commit fails after queries execute
+**Inputs:** Collection queries succeed but tx.Commit returns an error
+**Expected Behavior:** collectTarget returns an error. No downstream
+SQLite writes (InsertQueryRunBatch, InsertSnapshot) are executed. The
+snapshot is not recorded as collected.

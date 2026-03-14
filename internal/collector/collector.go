@@ -420,7 +420,9 @@ func (c *Collector) collectTarget(ctx context.Context, tgt config.TargetConfig, 
 		populateSnapshotField(data, q.ID, rows)
 	}
 
-	tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit tx for %s: %w", tgt.Name, err)
+	}
 
 	// Step 5: Batch insert query runs + results.
 	if len(runs) > 0 {
