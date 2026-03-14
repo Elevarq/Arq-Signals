@@ -100,6 +100,55 @@ If you want automated analysis and reporting on top of Arq Signals
 snapshots, see [Compatibility with Arq Analyzer](#compatibility-with-arq-analyzer)
 below.
 
+## Specification & Test-Driven Development (STDD)
+
+Arq Signals is developed using STDD — a methodology where the
+specification and tests define the system, and code is a replaceable
+artifact that must satisfy both.
+
+The repository contains:
+
+- **Formal specification** — 36 numbered requirements covering
+  collection, safety, configuration, API, and persistence
+  ([specification.md](features/arq-signals/specification.md))
+- **Acceptance tests** — 43 test cases derived directly from the
+  specification
+  ([acceptance-tests.md](features/arq-signals/acceptance-tests.md))
+- **Traceability matrix** — every requirement mapped to executable
+  tests with evidence classification (behavioral, structural, or
+  integration)
+  ([traceability.md](features/arq-signals/traceability.md))
+- **Language-neutral contracts** — API and configuration schemas
+  defined as appendices, independent of the Go implementation
+  ([Appendix A](features/arq-signals/appendix-a-api-contract.md),
+  [Appendix B](features/arq-signals/appendix-b-configuration-schema.md))
+
+This approach matters for a tool that connects to production databases.
+Every safety guarantee — read-only enforcement, role validation,
+credential handling — is formally specified, tested, and traceable.
+You can verify the claims without reading the implementation.
+
+## Why DBAs trust Arq Signals
+
+- All PostgreSQL queries execute inside `READ ONLY` transactions,
+  enforced at three independent layers
+- Role safety validation blocks superuser, replication, and bypassrls
+  roles before any query runs
+- Defensive session timeouts (`statement_timeout`, `lock_timeout`,
+  `idle_in_transaction_session_timeout`) prevent runaway queries
+- The collector never performs write operations on PostgreSQL — this is
+  enforced by static SQL linting, session configuration, and
+  transaction access mode
+- Credentials are never stored in snapshots, export metadata, API
+  responses, or log output
+- If an unsafe role override is used, it is explicitly recorded in
+  export metadata with the specific bypassed checks
+- The entire safety model is formally specified and covered by 111
+  automated tests
+
+For the full safety model, see
+[docs/runtime-safety-model.md](docs/runtime-safety-model.md).
+
 ## Installation
 
 ### Docker Compose (recommended for trying)
