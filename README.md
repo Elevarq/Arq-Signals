@@ -187,17 +187,26 @@ make build    # produces bin/arq-signals and bin/arqctl
 See [`examples/signals.yaml`](examples/signals.yaml) for a complete
 annotated configuration file.
 
-### PostgreSQL setup
+### Recommended PostgreSQL role
 
-Arq Signals needs a monitoring role with read access to statistics views:
+Arq Signals is designed to run using a dedicated monitoring role, not
+the PostgreSQL superuser. For production use, create a role such as
+`arq_signals` and grant the `pg_monitor` predefined role:
 
 ```sql
-CREATE ROLE arq_monitor WITH LOGIN PASSWORD 'choose_a_strong_password';
-GRANT pg_monitor TO arq_monitor;
+CREATE ROLE arq_signals LOGIN;
+GRANT pg_monitor TO arq_signals;
+GRANT CONNECT ON DATABASE your_database TO arq_signals;
 
 -- Optional: enable query-level statistics
 CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
 ```
+
+The default `postgres` role is a superuser and will be rejected by the
+safety model unless the operator explicitly enables unsafe override
+mode (`ARQ_SIGNALS_ALLOW_UNSAFE_ROLE=true`). This behavior is
+intentional — it prevents accidental execution with elevated
+privileges in production.
 
 ## Using Arq Signals
 
