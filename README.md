@@ -76,7 +76,16 @@ audit the binary. You own the output.
 ## What Arq Signals does
 
 - Connects to one or more PostgreSQL instances (14+)
-- Executes a versioned catalog of read-only SQL collectors
+- Runs 29 read-only diagnostic collectors covering:
+  - Server configuration and identity
+  - Session activity and connection pressure
+  - Table, index, and I/O statistics
+  - Query intelligence (via pg_stat_statements)
+  - Transaction wraparound risk
+  - Vacuum and autovacuum health
+  - Replication status and slot risk (graceful when absent)
+  - Checkpoint and background writer pressure
+  - Storage growth and temp I/O pressure
 - Stores results locally in SQLite as structured NDJSON
 - Schedules collection with configurable cadences (5m to 7d per query)
 - Packages snapshots as portable ZIP archives
@@ -108,8 +117,8 @@ artifact that must satisfy both.
 
 The repository contains:
 
-- **Formal specification** — 36 numbered requirements covering
-  collection, safety, configuration, API, and persistence
+- **Formal specification** — 56 numbered requirements covering
+  collection, safety, configuration, API, persistence, and diagnostics
   ([specification.md](features/arq-signals/specification.md))
 - **Acceptance tests** — 43 test cases derived directly from the
   specification
@@ -143,7 +152,7 @@ You can verify the claims without reading the implementation.
   responses, or log output
 - If an unsafe role override is used, it is explicitly recorded in
   export metadata with the specific bypassed checks
-- The entire safety model is formally specified and covered by 111
+- The entire safety model is formally specified and covered by 135
   automated tests
 
 For the full safety model, see
@@ -426,16 +435,15 @@ their own tooling or analysis workflows.
 
 ## Project status
 
-Arq Signals is in **early release** (v0.1.0). The collection engine,
-safety model, and snapshot format are stable and tested (94 automated
-tests). The snapshot format is versioned and will maintain backward
-compatibility.
+Arq Signals v0.2.0 — the collection engine, safety model, and snapshot
+format are stable and tested (135 automated tests, 56 STDD
+requirements). Smoke-tested against PostgreSQL 14, 15, 16, 17, and 18.
 
 **Roadmap:**
 
-- Expand collector coverage (replication stats, locks, WAL)
 - Kubernetes deployment examples
 - Community-contributed collectors
+- Additional storage and replication diagnostics
 
 ## Contributing
 
