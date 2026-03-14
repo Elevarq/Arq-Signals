@@ -18,29 +18,29 @@
 | R008 | No external AI network calls | TC-SIG-013 | COVERED | STRUCTURAL | Source scan confirms no LLM transport code |
 | R009 | Suitable for OSS release | TC-SIG-014 | COVERED | STRUCTURAL | LICENSE present; no proprietary markers in source |
 | R010 | Stable CLI with commands | TC-SIG-015 | COVERED | STRUCTURAL | CLI help output includes required commands |
-| R011 | HTTP API endpoints (see Appendix A) | TC-SIG-016, TC-SIG-017, TC-SIG-041 | COVERED | BEHAVIORAL | /health returns 200 no auth; /status returns expected fields; /status excludes secret fields |
+| R011 | HTTP API endpoints (see Appendix A) | TC-SIG-016, TC-SIG-017, TC-SIG-041 | COVERED | BEHAVIORAL | /health 200 no auth; /status fields + no secret fields; /collect/now 202; /export ZIP |
 | R012 | Per-query and per-target timeouts | TC-SIG-018 | COVERED | BEHAVIORAL | Default timeouts verified; timeout options override correctly |
 | R013 | Three-layer read-only enforcement | TC-SIG-019 | COVERED | BEHAVIORAL + STRUCTURAL | Linter tested (10 cases); session param verified; ReadOnly tx verified |
 | R014 | Version and extension filtering | TC-SIG-020 | COVERED | BEHAVIORAL | Extension exclusion/inclusion; sorted output |
 | R015 | Cadence-based scheduling | TC-SIG-021 | COVERED | BEHAVIORAL | Duration constants; due-selection behavior; no catch-up |
-| R016 | Credentials never cached/exported | TC-SIG-022 | COVERED | STRUCTURAL | No password column in schema; no Password field in storage types; no credentials in export |
+| R016 | Credentials never cached/exported | TC-SIG-022 | COVERED | STRUCTURAL | No password column in schema; no Password field in storage types |
 | R017 | Session read-only guard | TC-SIG-025 | COVERED | BEHAVIORAL + STRUCTURAL | Connection config sets read-only param; verified on acquired connection |
-| R018 | Refuse superuser role | TC-SIG-026, TC-SIG-034 | COVERED | BEHAVIORAL | Superuser hard failure blocks; error contains attribute detail; default is blocking |
+| R018 | Refuse superuser role | TC-SIG-026, TC-SIG-034 | COVERED | BEHAVIORAL | Superuser hard failure blocks; default is blocking |
 | R019 | Refuse replication role | TC-SIG-027 | COVERED | BEHAVIORAL | Replication hard failure blocks |
 | R020 | Refuse bypassrls role | TC-SIG-028 | COVERED | BEHAVIORAL | BypassRLS hard failure blocks |
 | R021 | Read-only transaction enforcement | TC-SIG-025 | COVERED | BEHAVIORAL + STRUCTURAL | Dedicated connection; SET LOCAL timeouts inside transaction |
-| R022 | Session timeout enforcement | TC-SIG-029 | COVERED | BEHAVIORAL + STRUCTURAL | Default timeouts; SET LOCAL verified; lock_timeout=5000; three params present |
-| R023 | Hard vs soft failure distinction | TC-SIG-030 | COVERED | BEHAVIORAL | Warnings do not block; hard failures do; mixed preserves blocking |
-| R024 | No secrets in logs/API/export | TC-SIG-031, TC-SIG-041 | COVERED | BEHAVIORAL | DSN redaction; error redaction; /status excludes secret fields |
-| R025 | Actionable error messages | TC-SIG-032 | COVERED | BEHAVIORAL | Error contains remediation guidance and specific attribute names |
-| R026 | Unsafe override model | TC-SIG-033, TC-SIG-034, TC-SIG-042 | COVERED | BEHAVIORAL | Override option; default false; env var; export metadata with bypass reasons |
-| R027 | Configuration via YAML + env vars | TC-SIG-040 | UNCOVERED | — | New requirement; pending test |
-| R028 | Config file search order | TC-SIG-040 | UNCOVERED | — | New requirement; pending test |
-| R029 | Single-target container mode via env | TC-SIG-040 | UNCOVERED | — | New requirement; pending test |
-| R030 | Config validation at startup | TC-SIG-040 | UNCOVERED | — | New requirement; pending test |
-| R031 | Initial forced collection | TC-SIG-037 | UNCOVERED | — | New requirement; pending test |
-| R032 | Overlap prevention | TC-SIG-038 | UNCOVERED | — | New requirement; pending test |
-| R033 | Concurrent multi-target collection | TC-SIG-039 | UNCOVERED | — | New requirement; pending test |
+| R022 | Session timeout enforcement | TC-SIG-029 | COVERED | BEHAVIORAL + STRUCTURAL | Default timeouts; SET LOCAL verified; lock_timeout=5000 |
+| R023 | Hard vs soft failure distinction | TC-SIG-030 | COVERED | BEHAVIORAL | Warnings do not block; hard failures do |
+| R024 | No secrets in logs/API/export | TC-SIG-031, TC-SIG-041 | COVERED | BEHAVIORAL | DSN redaction; /status excludes secret fields |
+| R025 | Actionable error messages | TC-SIG-032 | COVERED | BEHAVIORAL | Error contains remediation guidance |
+| R026 | Unsafe override model | TC-SIG-033, TC-SIG-034, TC-SIG-042 | COVERED | BEHAVIORAL | Override option; default false; export metadata with bypass reasons |
+| R027 | Configuration via YAML + env vars | TC-SIG-040 | COVERED | BEHAVIORAL | YAML loading, env override precedence, default values |
+| R028 | Config file search order | TC-SIG-040 | COVERED | BEHAVIORAL | Defaults applied when no file found |
+| R029 | Single-target container mode via env | TC-SIG-040 | COVERED | BEHAVIORAL | ARQ_SIGNALS_TARGET_* creates target with correct fields and defaults |
+| R030 | Config validation at startup | TC-SIG-040 | COVERED | BEHAVIORAL | Validate catches short interval, zero retention, empty fields, multiple secrets, bad durations |
+| R031 | Initial forced collection | TC-SIG-037 | COVERED | BEHAVIORAL | First cycle fires immediately; collect_error event proves execution |
+| R032 | Overlap prevention | TC-SIG-038 | COVERED | BEHAVIORAL | Rapid CollectNow calls do not block (buffered channel dedup) |
+| R033 | Concurrent multi-target collection | TC-SIG-039 | COVERED | BEHAVIORAL | 3 targets with maxConcurrent=2; all 3 attempted; errors per target |
 | R034 | Commit failure blocks persistence | TC-SIG-036 | COVERED | STRUCTURAL | Commit error checked; return precedes downstream persistence |
 | R035 | Export metadata contract | TC-SIG-042 | COVERED | BEHAVIORAL | Export metadata contains unsafe_mode and dynamic bypass reasons |
-| R036 | Persistence guarantees | TC-SIG-043 | UNCOVERED | — | New requirement; pending test |
+| R036 | Persistence guarantees | TC-SIG-043 | COVERED | BEHAVIORAL | Migration creates tables; instance ID stable; retention cleanup; batch insert atomic |

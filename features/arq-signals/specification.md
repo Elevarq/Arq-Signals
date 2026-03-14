@@ -296,12 +296,11 @@ above must be maintained.
 
 | Status | Count |
 |--------|-------|
-| COVERED | 26 |
+| COVERED | 36 |
 | PARTIALLY COVERED | 0 |
-| UNCOVERED | 10 |
+| UNCOVERED | 0 |
 
-26 of 36 requirements are covered by automated tests. 10 new requirements
-(R027-R036) are pending test implementation.
+All 36 requirements are covered by automated tests.
 
 ## Traceability Notes
 
