@@ -158,6 +158,18 @@ You can verify the claims without reading the implementation.
 For the full safety model, see
 [docs/runtime-safety-model.md](docs/runtime-safety-model.md).
 
+## Examples
+
+| Example | Description |
+|---------|-------------|
+| [Local safe role](examples/local-safe-role/) | Recommended production setup with `arq_signals` monitoring role |
+| [Local superuser override](examples/local-superuser-override/) | Dev/test setup with postgres superuser (unsafe override) |
+| [Docker](examples/docker/) | Container build, run, and export workflow |
+| [Docker Compose](examples/docker-compose.yml) | Quick start with PostgreSQL 16 |
+| [Helm](examples/helm/) | Kubernetes deployment with the starter Helm chart |
+| [Snapshot inspection](examples/snapshot-inspection/) | How to inspect and understand export output |
+| [Snapshot example](examples/snapshot-example/) | Static reference snapshot for offline review |
+
 ## Supported PostgreSQL versions
 
 Arq Signals supports PostgreSQL 14 and later. Smoke-tested against
