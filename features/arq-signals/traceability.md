@@ -47,3 +47,12 @@
 | R037 | Dynamic column capture for version-sensitive views | TC-SIG-044 | COVERED | BEHAVIORAL | pg_stat_statements uses SELECT *; linter accepts; NDJSON preserves all dynamic columns including future/renamed ones |
 | R038 | Query failure isolation | TC-SIG-045 | COVERED | BEHAVIORAL + STRUCTURAL | Savepoint isolation in collector; ROLLBACK TO SAVEPOINT on failure; transaction not aborted |
 | R039 | Dynamic capture preserves safety model | TC-SIG-046 | COVERED | BEHAVIORAL | Dynamic query passes linter; no write keywords; extension gating preserved |
+| R040 | Server identity collection | TC-SIG-047 | COVERED | BEHAVIORAL | Registered, passes linter |
+| R041 | Extension inventory | TC-SIG-047 | COVERED | BEHAVIORAL | Registered, passes linter |
+| R042 | Checkpoint/bgwriter health | TC-SIG-047 | COVERED | BEHAVIORAL | Registered, passes linter |
+| R043 | Long-running transactions | TC-SIG-047 | COVERED | BEHAVIORAL | Registered, passes linter |
+| R044 | Lock-blocking chains | TC-SIG-047 | COVERED | BEHAVIORAL | Registered, passes linter |
+| R045 | Login roles inventory (no password hashes) | TC-SIG-047 | COVERED | BEHAVIORAL | Registered, passes linter, no pg_authid/password access |
+| R046 | Connection utilization | TC-SIG-047 | COVERED | BEHAVIORAL | Registered, passes linter |
+| R047 | Planner stats staleness | TC-SIG-047 | COVERED | BEHAVIORAL | Registered, passes linter |
+| R048 | pg_stat_statements reset check | TC-SIG-047 | COVERED | BEHAVIORAL | Registered, requires extension, gracefully skipped when absent |

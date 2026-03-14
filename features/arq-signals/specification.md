@@ -251,6 +251,46 @@ continue executing and producing results.
 safety model, credential handling guarantees, or export format
 conventions.
 
+### Diagnostic Pack 1
+
+**ARQ-SIGNALS-R040**: The system shall collect server identity information
+including PostgreSQL version number, server uptime, connected database name,
+and database size.
+
+**ARQ-SIGNALS-R041**: The system shall collect an inventory of installed
+PostgreSQL extensions with their version information.
+
+**ARQ-SIGNALS-R042**: The system shall collect checkpoint and background
+writer health statistics from pg_stat_bgwriter.
+
+**ARQ-SIGNALS-R043**: The system shall collect long-running transactions
+(older than a configurable threshold) including PID, user, age, and a
+truncated query snippet. Query text shall be truncated to prevent
+capturing large query bodies.
+
+**ARQ-SIGNALS-R044**: The system shall collect active lock-blocking chains
+showing which sessions are blocking other sessions, including wait
+durations.
+
+**ARQ-SIGNALS-R045**: The system shall collect an inventory of login-capable
+roles with their privilege flags (superuser, createdb, createrole,
+replication, bypassrls). The collector shall NOT access password hashes
+or the pg_authid table.
+
+**ARQ-SIGNALS-R046**: The system shall collect connection utilization
+metrics including total, active, idle, and idle-in-transaction counts
+relative to max_connections.
+
+**ARQ-SIGNALS-R047**: The system shall collect planner statistics staleness
+indicators including estimated vs actual row counts, modifications since
+last analyze, and estimate drift percentage.
+
+**ARQ-SIGNALS-R048**: When pg_stat_statements is installed and
+pg_stat_statements_info is available (PG 14+), the system shall collect
+the statistics reset timestamp. When pg_stat_statements or
+pg_stat_statements_info is unavailable, this collector shall be
+gracefully skipped.
+
 ### Persistence
 
 **ARQ-SIGNALS-R036**: The system shall persist collected data locally so that
@@ -316,9 +356,11 @@ above must be maintained.
 |--------|-------|
 | COVERED | 39 |
 | PARTIALLY COVERED | 0 |
-| UNCOVERED | 0 |
+| UNCOVERED | 9 |
 
-All 39 requirements are covered by automated tests.
+39 of 48 requirements are covered by automated tests. R040-R048
+(diagnostic pack 1) are covered by registration and linting tests;
+full behavioral coverage requires live PostgreSQL.
 
 ## Traceability Notes
 

@@ -291,9 +291,18 @@ inspect exactly what Arq Signals collects without running it.
 | `wraparound_db_level_v1` | `pg_database` | 15m | Transaction ID age by database |
 | `wraparound_rel_level_v1` | `pg_class` | 15m | Transaction ID age by table |
 | `wraparound_blockers_v1` | `pg_stat_activity` | 5m | Long-running transactions blocking wraparound |
+| `server_identity_v1` | `version()`, uptime, db size | 6h | Server version, uptime, database context |
+| `extension_inventory_v1` | `pg_available_extensions` | 6h | Installed extensions with versions |
+| `bgwriter_stats_v1` | `pg_stat_bgwriter` | 15m | Checkpoint and background writer health |
+| `long_running_txns_v1` | `pg_stat_activity` | 5m | Transactions older than 5 minutes |
+| `blocking_locks_v1` | `pg_stat_activity` | 5m | Lock-blocking chains with wait durations |
+| `login_roles_v1` | `pg_roles` | 6h | Login roles with privilege flags (no password hashes) |
+| `connection_utilization_v1` | `pg_stat_activity` | 5m | Connection counts vs max_connections |
+| `planner_stats_staleness_v1` | `pg_stat_user_tables` + `pg_class` | 1h | Estimate drift and modifications since analyze |
+| `pgss_reset_check_v1` | `pg_stat_statements_info` | 1h | Statistics reset timestamp (requires extension, PG 14+) |
 
 Every query is visible in
-[`internal/pgqueries/catalog.go`](internal/pgqueries/catalog.go).
+[`internal/pgqueries/`](internal/pgqueries/).
 Queries requiring unavailable extensions are silently skipped.
 
 ## API
