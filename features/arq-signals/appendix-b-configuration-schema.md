@@ -1,0 +1,133 @@
+# Appendix B: Configuration Schema
+
+This appendix defines the configuration model for Arq Signals. Any
+conforming implementation must accept this configuration format.
+
+## Configuration sources
+
+Configuration is loaded from (in priority order):
+
+1. **CLI flag**: `--config <path>` (highest priority for file location)
+2. **System path**: `/etc/arq/signals.yaml`
+3. **Local path**: `./signals.yaml`
+
+The first file found is used. Environment variables override file
+values for all supported fields.
+
+## YAML schema
+
+```yaml
+# Environment: "dev" (default), "lab", or "prod"
+# In prod, TLS enforcement is strict (see R013, TLS validation below).
+env: dev
+
+# Collector settings
+signals:
+  poll_interval: 5m         # Collection cycle interval (duration string)
+  retention_days: 30         # Days to retain collected data
+  log_level: info            # debug, info, warn, error
+  log_json: false            # Output logs as JSON
+  max_concurrent_targets: 4  # Max targets collected in parallel
+  target_timeout: 60s        # Per-target collection time budget
+  query_timeout: 10s         # Per-query execution timeout
+
+# PostgreSQL targets (one or more)
+targets:
+  - name: <string>           # Required. Unique target identifier.
+    host: <string>           # Required. PostgreSQL hostname or IP.
+    port: <integer>          # Optional. Default: 5432.
+    dbname: <string>         # Required. Database name.
+    user: <string>           # Required. PostgreSQL username.
+    enabled: <boolean>       # Optional. Default: true.
+    sslmode: <string>        # Optional. PostgreSQL sslmode value.
+    sslrootcert_file: <path> # Optional. Path to CA certificate.
+
+    # Credential source (at most one):
+    password_file: <path>    # Read password from file (newline-trimmed)
+    password_env: <string>   # Read password from this env var's value
+    pgpass_file: <path>      # Read password from pgpass-format file
+
+# Local storage
+database:
+  path: /data/arq-signals.db # Path to local database file
+  wal: true                  # Enable write-ahead logging
+
+# HTTP API
+api:
+  listen_addr: "127.0.0.1:8081"  # Bind address
+  read_timeout: 30s              # HTTP read timeout
+  write_timeout: 180s            # HTTP write timeout
+```
+
+## Environment variable overrides
+
+All supported environment variables and their corresponding config
+fields:
+
+| Variable | Config field | Default | Notes |
+|----------|-------------|---------|-------|
+| `ARQ_ENV` | `env` | `dev` | |
+| `ARQ_ALLOW_INSECURE_PG_TLS` | (env-only) | `false` | Allows weak sslmode in non-prod |
+| `ARQ_SIGNALS_ALLOW_UNSAFE_ROLE` | (env-only) | `false` | Allows unsafe role attributes |
+| `ARQ_SIGNALS_POLL_INTERVAL` | `signals.poll_interval` | `5m` | |
+| `ARQ_SIGNALS_RETENTION_DAYS` | `signals.retention_days` | `30` | |
+| `ARQ_SIGNALS_LOG_LEVEL` | `signals.log_level` | `info` | |
+| `ARQ_SIGNALS_LOG_JSON` | `signals.log_json` | `false` | |
+| `ARQ_SIGNALS_MAX_CONCURRENT_TARGETS` | `signals.max_concurrent_targets` | `4` | |
+| `ARQ_SIGNALS_TARGET_TIMEOUT` | `signals.target_timeout` | `60s` | |
+| `ARQ_SIGNALS_QUERY_TIMEOUT` | `signals.query_timeout` | `10s` | |
+| `ARQ_SIGNALS_LISTEN_ADDR` | `api.listen_addr` | `127.0.0.1:8081` | |
+| `ARQ_SIGNALS_WRITE_TIMEOUT` | `api.write_timeout` | `180s` | |
+| `ARQ_SIGNALS_DB_PATH` | `database.path` | `/data/arq-signals.db` | |
+| `ARQ_SIGNALS_API_TOKEN` | (env-only) | auto-generated | |
+
+## Single-target container mode
+
+For containerized deployments, a single target can be configured
+entirely via environment variables. These are appended to any
+file-based targets:
+
+| Variable | Default | Required |
+|----------|---------|----------|
+| `ARQ_SIGNALS_TARGET_HOST` | — | Yes (activates container mode) |
+| `ARQ_SIGNALS_TARGET_PORT` | `5432` | No |
+| `ARQ_SIGNALS_TARGET_DBNAME` | `postgres` | No |
+| `ARQ_SIGNALS_TARGET_USER` | — | Yes |
+| `ARQ_SIGNALS_TARGET_NAME` | `default` | No |
+| `ARQ_SIGNALS_TARGET_SSLMODE` | — | No |
+| `ARQ_SIGNALS_TARGET_PASSWORD_FILE` | — | No |
+| `ARQ_SIGNALS_TARGET_PASSWORD_ENV` | — | No |
+| `ARQ_SIGNALS_TARGET_PGPASS_FILE` | — | No |
+
+## Credential sources
+
+Each target supports at most one credential source:
+
+| Source | Behavior |
+|--------|----------|
+| `password_file` | Read file contents, trim trailing newline |
+| `password_env` | Read the value of the named environment variable |
+| `pgpass_file` | Parse pgpass-format file, match by host:port:dbname:user |
+| (none) | Attempt connection without password (peer/trust auth) |
+
+Specifying more than one source for the same target is a validation
+error.
+
+Credentials are read fresh on every new connection to support password
+rotation without restart.
+
+## TLS validation
+
+| Environment | Behavior |
+|-------------|----------|
+| `prod` | Weak sslmode (disable, allow, prefer, require) is rejected. Only verify-ca and verify-full are allowed. `sslrootcert_file` is required. `ARQ_ALLOW_INSECURE_PG_TLS` is not permitted. |
+| `dev`, `lab` | Weak sslmode is allowed only if `ARQ_ALLOW_INSECURE_PG_TLS=true` is set. Otherwise the system rejects weak modes with an actionable error message. |
+
+## Validation rules
+
+At startup, the system shall validate configuration and:
+- **Abort** on: unparseable duration strings, missing required fields,
+  multiple credential sources per target, weak TLS in prod
+- **Warn** (non-blocking) on: very short poll interval (<10s), zero
+  retention days, empty listen address, weak sslmode in non-prod,
+  missing target fields (name, host, user, dbname)

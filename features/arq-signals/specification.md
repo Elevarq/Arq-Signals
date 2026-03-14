@@ -18,7 +18,7 @@ LLM integration.
 - ZIP export for snapshot transfer
 - CLI for collection operations
 - HTTP API for collection and export endpoints
-- SQLite local storage for collected signals
+- Local persistent storage for collected signals
 - BSD-3-Clause open-source distribution
 
 ### Out of Scope
@@ -36,7 +36,7 @@ LLM integration.
 - Optional: target filters, cadence overrides, export time range
 
 ## Outputs
-- Structured snapshots stored in local SQLite
+- Structured snapshots stored in local persistent storage
 - ZIP export packages containing:
   - `metadata.json` (collector version, timestamp, PG version, target info)
   - `query_catalog.json` (executed query definitions)
@@ -89,35 +89,39 @@ query_catalog.json, query_runs.ndjson, and query_results.ndjson.
 ### Safety
 
 **ARQ-SIGNALS-R007**: The system shall not perform scoring, recommendations,
-root-cause analysis, or LLM interaction. No package in the Arq Signals
-repository shall import or depend on modules that implement these functions.
+root-cause analysis, or LLM interaction. No module in the Arq Signals
+codebase shall depend on components that implement these functions.
 
 **ARQ-SIGNALS-R008**: The system shall operate without network calls to
-external AI services. No HTTP client, Unix domain socket client, or other
-transport for LLM communication shall be present in the codebase.
+external AI services. No transport for LLM communication shall be present
+in the codebase.
 
 **ARQ-SIGNALS-R009**: The system shall be suitable for open-source release
-under the BSD-3-Clause license. The Arq Signals repository shall contain no proprietary
-analysis logic, no proprietary prompts, no confidential content, and no credentials.
+under the BSD-3-Clause license. The repository shall contain no proprietary
+analysis logic, no proprietary prompts, no confidential content, and no
+credentials.
 
 ### Interface
 
-**ARQ-SIGNALS-R010**: The system shall expose a stable CLI (`arqctl`) with at
-minimum the following commands:
+**ARQ-SIGNALS-R010**: The system shall expose a stable CLI with at minimum
+the following commands:
 - `collect now` — trigger an immediate collection cycle
-- `export` — download a snapshot ZIP archive
+- `export` — download a snapshot ZIP archive (with optional output path)
 - `status` — show collector status and target connectivity
 - `version` — print version information
 
+The CLI shall communicate with the running collector via its HTTP API. The
+API address and authentication token shall be configurable via flags or
+environment variables.
+
 **ARQ-SIGNALS-R011**: The system shall expose an HTTP API on a configurable
-port with at minimum:
-- `GET /health` — liveness probe (always 200)
-- `GET /status` — collector status, target info, recent errors
-- `POST /collect/now` — trigger immediate collection
-- `GET /export` — download snapshot ZIP
+address with the endpoints, response schemas, and authentication requirements
+defined in Appendix A (API Contract).
 
 **ARQ-SIGNALS-R012**: The system shall use per-query timeouts and a per-target
 time budget to prevent slow queries from blocking collection of other targets.
+The effective timeout for any single query is the minimum of: the query's own
+timeout, the configured query timeout, and the remaining target time budget.
 
 **ARQ-SIGNALS-R013**: All PostgreSQL connections shall be read-only, enforced
 by three layers:
@@ -134,15 +138,15 @@ at minimum: 5m, 15m, 1h, 6h, 24h, and 7d intervals. Each query declares its
 own cadence. The scheduler shall not catch up missed intervals.
 
 **ARQ-SIGNALS-R016**: Credentials shall never be cached in memory beyond the
-scope of a single connection attempt, never written to SQLite, and never
-included in snapshot exports.
+scope of a single connection attempt, never written to persistent storage,
+and never included in snapshot exports.
 
-## Runtime Safety
+### Runtime Safety
 
-**ARQ-SIGNALS-R017**: The system shall validate that the PostgreSQL session can
-be placed into a read-only transaction posture before executing any collector
-queries. If the session cannot be confirmed as read-only, collection for that
-target shall fail with a clear error.
+**ARQ-SIGNALS-R017**: The system shall validate that the PostgreSQL session
+can be placed into a read-only transaction posture before executing any
+collector queries. If the session cannot be confirmed as read-only,
+collection for that target shall fail with a clear error.
 
 **ARQ-SIGNALS-R018**: The system shall refuse collection when the effective
 PostgreSQL role has the superuser attribute (rolsuper = true).
@@ -154,8 +158,8 @@ PostgreSQL role has the replication attribute (rolreplication = true).
 PostgreSQL role has the bypass RLS attribute (rolbypassrls = true).
 
 **ARQ-SIGNALS-R021**: The system shall enforce read-only transaction execution
-for every collector run by using BEGIN ... READ ONLY and verifying session-level
-default_transaction_read_only is set to on.
+for every collector run by using BEGIN ... READ ONLY and verifying
+session-level default_transaction_read_only is set to on.
 
 **ARQ-SIGNALS-R022**: The system shall set conservative session-local timeouts
 for collector execution. At minimum: statement_timeout (from configured query
@@ -169,7 +173,7 @@ pg_write_all_data) that are logged but do not block.
 
 **ARQ-SIGNALS-R024**: The system shall not expose database passwords or secrets
 in logs, API responses, status output, or exported snapshots. Credential
-resolution errors shall be redacted.
+resolution errors shall be redacted before logging or returning to callers.
 
 **ARQ-SIGNALS-R025**: The system shall provide clear, actionable operator-facing
 error messages when safety posture validation fails, including which check
@@ -181,13 +185,74 @@ enabled, blocked role attributes are downgraded to warnings. Unsafe mode shall
 be recorded in export metadata as unsafe_mode: true with the specific bypassed
 checks listed.
 
+### Configuration
+
+**ARQ-SIGNALS-R027**: The system shall support configuration via a YAML file
+and/or environment variables, with the schema defined in Appendix B
+(Configuration Schema). Environment variables shall take precedence over
+file-based values.
+
+**ARQ-SIGNALS-R028**: The system shall search for configuration files in
+order: explicit path via CLI flag, then system path `/etc/arq/signals.yaml`,
+then local path `./signals.yaml`. The first file found is used.
+
+**ARQ-SIGNALS-R029**: The system shall support configuring a single
+PostgreSQL target entirely via environment variables (ARQ_SIGNALS_TARGET_*)
+for containerized deployments. See Appendix B for the full variable list.
+
+**ARQ-SIGNALS-R030**: The system shall validate configuration at startup and
+reject invalid values (e.g. unparseable durations, empty required fields).
+Non-blocking warnings (e.g. weak TLS mode) shall be logged without aborting.
+
+### Collection Cycle Semantics
+
+**ARQ-SIGNALS-R031**: The system shall run collection cycles at a configurable
+interval (default: 5 minutes). The first cycle after startup shall force
+execution of all eligible queries regardless of cadence, to establish a
+baseline.
+
+**ARQ-SIGNALS-R032**: The system shall prevent overlapping collection cycles.
+If a cycle is still running when the next interval triggers, the new cycle
+shall be skipped with a warning.
+
+**ARQ-SIGNALS-R033**: The system shall collect from multiple targets
+concurrently with a configurable maximum parallelism (default: 4). A failure
+on one target shall not block or delay collection from other targets.
+
+### Data Integrity
+
+**ARQ-SIGNALS-R034**: If the PostgreSQL read-only transaction fails to commit
+after queries have been executed, the system shall not persist query results
+or record the collection as successful. The transaction commit result must be
+checked and a commit failure must abort the success path for that target.
+
+### Export Metadata
+
+**ARQ-SIGNALS-R035**: The export metadata.json shall contain at minimum the
+fields defined in Appendix A, section "Export metadata schema." When unsafe
+mode is active, the metadata shall include `unsafe_mode: true` and
+`unsafe_reasons` listing the specific bypassed checks.
+
+### Persistence
+
+**ARQ-SIGNALS-R036**: The system shall persist collected data locally so that
+it survives process restarts. The persistence layer shall support:
+- Atomic writes (collection results stored transactionally)
+- Retention-based cleanup (data older than configured days is deleted)
+- Schema migration (storage schema is versioned and auto-migrated on startup)
+- An instance identifier (generated on first run, stable across restarts)
+
+The specific storage engine is an implementation choice, but the guarantees
+above must be maintained.
+
 ## Invariants
 
 - **INV-SIGNALS-01**: Collector output is passive evidence, not interpretation.
   No collected value shall be annotated with pass/fail status, severity,
   recommendations, or scores.
 - **INV-SIGNALS-02**: The SQL query catalog is the single source of truth for
-  what data is collected. Adding a collector requires only a `Register()` call.
+  what data is collected. Adding a collector requires only registering it
+  with the catalog at startup.
 - **INV-SIGNALS-03**: The snapshot format is a stable contract. Breaking
   changes require a new version suffix (e.g. `_v2`).
 - **INV-SIGNALS-04**: No proprietary prompts, scoring models, or analysis
@@ -200,19 +265,29 @@ checks listed.
   hygiene issues.
 - **INV-SIGNALS-07**: Credentials must never appear in any exported artifact,
   log line, API response, or stored record.
+- **INV-SIGNALS-08**: Collection cycles must not overlap. If the previous
+  cycle is still running, the next trigger is skipped.
+- **INV-SIGNALS-09**: Transaction commit failure must prevent downstream
+  persistence of results and success-path recording.
 
 ## Failure Conditions
 
-- FC-01: Connection failure to PostgreSQL target → log error, skip target, continue to next
-- FC-02: Query execution timeout → log warning, record error in query_run, continue
-- FC-03: Linter rejects a query at registration → process aborts (panic)
-- FC-04: SQLite write failure → log error, retry on next cycle
+- FC-01: Connection failure to PostgreSQL target → log error, skip target,
+  continue to next
+- FC-02: Query execution timeout → log warning, record error in query_run,
+  continue to next query
+- FC-03: Linter rejects a query at registration → process aborts
+- FC-04: Persistence write failure → log error, retry on next cycle
 - FC-05: Export with no data → produce empty ZIP with metadata only
+- FC-06: Transaction commit failure → abort success path for that target,
+  do not persist results
+- FC-07: Role safety check failure → block collection for that target with
+  actionable error (unless unsafe override is active)
 
 ## Non-Goals
 
 - Analysis or interpretation of collected data
-- User management or authentication (signals runs without auth by default)
+- User management or authentication beyond API token
 - Dashboard UI (analysis concern)
 - License enforcement (open source, no gating)
 - Report generation of any kind
@@ -223,11 +298,16 @@ checks listed.
 |--------|-------|
 | COVERED | 26 |
 | PARTIALLY COVERED | 0 |
-| UNCOVERED | 0 |
+| UNCOVERED | 10 |
 
-All 26 requirements are covered by automated tests (16 original + 10 runtime safety).
-requirements (R017–R026) are pending implementation.
+26 of 36 requirements are covered by automated tests. 10 new requirements
+(R027-R036) are pending test implementation.
 
 ## Traceability Notes
 
 See [traceability.md](traceability.md) for the requirement-to-test mapping.
+
+## Appendices
+
+- [Appendix A: API Contract](appendix-a-api-contract.md)
+- [Appendix B: Configuration Schema](appendix-b-configuration-schema.md)
