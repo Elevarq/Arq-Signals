@@ -23,6 +23,9 @@ func EncodeNDJSON(rows []map[string]any) ([]byte, bool, int, error) {
 	}
 
 	raw := buf.Bytes()
+	if raw == nil {
+		raw = []byte{} // ensure non-nil for NOT NULL constraint
+	}
 	uncompSize := len(raw)
 
 	if uncompSize <= compressThreshold {
