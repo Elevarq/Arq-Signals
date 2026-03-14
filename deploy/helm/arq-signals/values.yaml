@@ -1,0 +1,53 @@
+# Arq Signals Helm chart values
+
+image:
+  repository: ghcr.io/elevarq/arq-signals
+  tag: "0.2.0"
+  pullPolicy: IfNotPresent
+
+# PostgreSQL target configuration
+target:
+  host: ""           # Required: PostgreSQL hostname
+  port: 5432
+  dbname: postgres
+  user: arq_signals
+  sslmode: prefer
+  # Credential source (choose one):
+  passwordSecretName: ""    # Kubernetes secret containing the password
+  passwordSecretKey: password
+
+# Collector settings
+collector:
+  pollInterval: 5m
+  retentionDays: 30
+  targetTimeout: 60s
+  queryTimeout: 10s
+
+# API settings
+api:
+  port: 8081
+  # tokenSecretName: ""   # Optional: K8s secret for API token
+
+# Environment
+env: dev
+
+# Resource limits
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi
+
+# Persistence
+persistence:
+  enabled: true
+  size: 1Gi
+  storageClass: ""
+
+# Security context
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  readOnlyRootFilesystem: true

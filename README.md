@@ -158,6 +158,15 @@ You can verify the claims without reading the implementation.
 For the full safety model, see
 [docs/runtime-safety-model.md](docs/runtime-safety-model.md).
 
+## Supported PostgreSQL versions
+
+Arq Signals supports PostgreSQL 14 and later. Smoke-tested against
+PostgreSQL 14, 15, 16, 17, and 18. Version-specific collectors
+(e.g. `checkpointer_stats_v1` on PG 17+) are automatically included
+or excluded based on the detected server version. Collectors requiring
+optional extensions (e.g. `pg_stat_statements`) are silently skipped
+when the extension is not installed.
+
 ## Installation
 
 ### Docker Compose (recommended for trying)
