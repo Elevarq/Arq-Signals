@@ -474,6 +474,14 @@ requirements). Smoke-tested against PostgreSQL 14, 15, 16, 17, and 18.
 - Community-contributed collectors
 - Additional storage and replication diagnostics
 
+## Development methodology
+
+This project follows
+[STDD — Specification & Test-Driven Development](https://github.com/fheikens/stdd).
+Specifications and tests define correct behavior. Implementation is
+written to satisfy those rules. The development policy is defined in
+[CLAUDE.md](CLAUDE.md).
+
 ## Contributing
 
 We welcome contributions. See [CONTRIBUTING.md](CONTRIBUTING.md) for
