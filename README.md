@@ -441,18 +441,57 @@ annotated example.
 | `ARQ_SIGNALS_WRITE_TIMEOUT` | API write timeout | 180s |
 | `ARQ_SIGNALS_API_TOKEN` | Bearer token for API auth | auto-generated |
 
-## Compatibility with Arq Analyzer
+## Architecture and scope
 
-Arq Signals snapshots are designed to be consumed by
-[Arq Analyzer](https://elevarq.com/analyzer), a separate product that
-performs automated analysis, scoring, and LLM-powered reporting. The
-snapshot format (`arq-snapshot.v1`) is the stable contract between
-collector and analyzer.
+Arq Signals is the open-source collection layer of the Arq platform.
+It is a complete, standalone tool — not a crippled free tier.
 
-**Arq Signals is fully usable on its own.** You do not need Arq Analyzer
-to collect, export, or inspect your PostgreSQL diagnostics. Many teams
-use Arq Signals purely for data collection, feeding the snapshots into
-their own tooling or analysis workflows.
+```
+┌─────────────────┐
+│   Arq Signals   │  Collects diagnostic signals from PostgreSQL.
+│  (open source)  │  Produces portable snapshots. This repository.
+└────────┬────────┘
+         │ snapshot (ZIP / NDJSON)
+         ▼
+┌─────────────────┐
+│       Arq       │  Analyzes signals. Scores health. Generates
+│    (private)    │  findings and recommendations.
+└────────┬────────┘
+         │ findings
+         ▼
+┌─────────────────┐
+│ Arq Workbench   │  Presents results to engineers.
+│    (private)    │  Interactive UI for DBA workflows.
+└─────────────────┘
+```
+
+The snapshot format (`arq-snapshot.v1`) is the stable contract between
+layers. Each layer is independently deployable and separately
+maintained.
+
+**Arq Signals is fully usable on its own.** You do not need Arq or
+Arq Workbench to collect, export, or inspect your PostgreSQL
+diagnostics. Many teams use Arq Signals purely for data collection,
+feeding the snapshots into their own scripts, dashboards, or analysis
+workflows.
+
+### What stays out of Arq Signals — by design
+
+The boundary between Signals and the rest of the platform is
+intentional, not accidental:
+
+| Capability | Where it lives | Why not in Signals |
+|-----------|---------------|-------------------|
+| Database analysis | Arq | Interpretation is a separate concern from evidence collection |
+| Health scoring | Arq | Scoring requires domain judgment that evolves independently |
+| AI / LLM | Arq | Language models are not needed for safe data collection |
+| Recommendations | Arq | Remediation advice requires analysis context |
+| Cloud services | None | No component phones home or uploads data |
+| Telemetry | None | No usage tracking exists anywhere in the platform |
+
+This separation keeps the collector small, auditable, and safe to run
+in restricted environments where third-party analysis tools may not be
+permitted.
 
 ## Project status
 
