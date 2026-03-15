@@ -483,13 +483,15 @@ guidelines and [GOVERNANCE.md](GOVERNANCE.md) for project governance.
 **Out of scope:** analysis, scoring, AI (those belong in a downstream
 analyzer).
 
-## Further reading
+## Project resources
 
-- [Security policy](SECURITY.md)
-- [Changelog](CHANGELOG.md)
-- [Runtime safety model](docs/runtime-safety-model.md)
-- [Adoption guide](docs/adoption-guide.md)
-- [FAQ](docs/faq.md)
+- [Collector inventory](docs/collectors.md) — all 29 collectors with sources and cadences
+- [Runtime safety model](docs/runtime-safety-model.md) — read-only enforcement details
+- [Adoption guide](docs/adoption-guide.md) — production deployment guidance
+- [FAQ](docs/faq.md) — common questions
+- [Changelog](CHANGELOG.md) — release history
+- [Security policy](SECURITY.md) — vulnerability reporting
+- [Citation](CITATION.cff) — how to cite this project
 
 ## License
 

@@ -73,6 +73,22 @@ func init() {
 The linter will reject your query at startup if it contains DDL, DML, or
 dangerous functions. This is intentional — all collectors must be read-only.
 
+## Safety requirements
+
+All contributions must preserve the production safety guarantees:
+
+- **Read-only only.** Every SQL query must pass the static linter
+  (SELECT/WITH only, no DDL, DML, or dangerous functions).
+- **No credentials in output.** Passwords must never appear in logs,
+  exports, API responses, or stored data.
+- **No external network calls.** Arq Signals must not phone home,
+  upload telemetry, or contact external services.
+- **Fail-closed for unsafe roles.** Superuser, replication, and
+  bypassrls roles must be blocked unless explicitly overridden.
+
+If your change affects the safety model, update the relevant STDD
+artifacts in `features/arq-signals/` and add corresponding tests.
+
 ## Code style
 
 - Follow standard Go conventions (`gofmt`, `go vet`)
