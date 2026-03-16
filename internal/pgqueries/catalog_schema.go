@@ -2,16 +2,15 @@ package pgqueries
 
 import "time"
 
-// Schema Metadata Collectors — Phase 1
+// Schema Metadata Collectors
 //
 // These collectors extract structural schema metadata on a slow
 // cadence (default 24h). They focus on non-system objects only.
 //
-// Specifications:
-//   specifications/collectors/pg_constraints_v1.md
-//   specifications/collectors/pg_indexes_v1.md
-//   specifications/collectors/pg_stats_v1.md
-//   specifications/collectors/pg_columns_v1.md
+// Phase 1: pg_constraints_v1, pg_indexes_v1, pg_stats_v1, pg_columns_v1
+// Phase 2: pg_schemas_v1, ...
+//
+// Specifications: specifications/collectors/*.md
 
 // SchemaFilter is the standard WHERE clause that excludes PostgreSQL
 // internal schemas from all schema metadata collectors.
@@ -154,6 +153,31 @@ func init() {
 		ResultKind:     ResultRowset,
 		RetentionClass: RetentionMedium,
 		Timeout:        30 * time.Second,
+		Cadence:        CadenceDaily,
+	})
+
+	// --- Phase 2: Schema snapshot foundation ---
+
+	// pg_schemas_v1: schema (namespace) inventory with ownership.
+	// Provides namespace context for all other schema collectors.
+	//
+	// Specification: specifications/collectors/pg_schemas_v1.md
+	Register(QueryDef{
+		ID:       "pg_schemas_v1",
+		Category: "schema",
+		SQL: `SELECT
+			n.nspname,
+			r.rolname AS nspowner,
+			n.nspname = 'public' AS is_default
+		FROM pg_namespace n
+		JOIN pg_roles r ON r.oid = n.nspowner
+		WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+		  AND n.nspname NOT LIKE 'pg_temp_%'
+		  AND n.nspname NOT LIKE 'pg_toast_temp_%'
+		ORDER BY n.nspname`,
+		ResultKind:     ResultRowset,
+		RetentionClass: RetentionLong,
+		Timeout:        10 * time.Second,
 		Cadence:        CadenceDaily,
 	})
 }

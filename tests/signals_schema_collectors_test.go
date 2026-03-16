@@ -578,13 +578,141 @@ func TestColumnsCollectorIncludedOnPG14(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Schema Metadata Collectors — Phase 2 Step 5: pg_schemas_v1
+// ---------------------------------------------------------------------------
+
+func TestSchemasCollectorRegistered(t *testing.T) {
+	q := pgqueries.ByID("pg_schemas_v1")
+	if q == nil {
+		t.Fatal("pg_schemas_v1 is not registered")
+	}
+	if q.Category != "schema" {
+		t.Errorf("category: got %q, want %q", q.Category, "schema")
+	}
+}
+
+func TestSchemasCollectorPassesLinter(t *testing.T) {
+	q := pgqueries.ByID("pg_schemas_v1")
+	if q == nil {
+		t.Fatal("pg_schemas_v1 not registered")
+	}
+	if err := pgqueries.LintQuery(q.SQL); err != nil {
+		t.Errorf("pg_schemas_v1 failed linter: %v", err)
+	}
+}
+
+func TestSchemasCollectorCadence(t *testing.T) {
+	q := pgqueries.ByID("pg_schemas_v1")
+	if q == nil {
+		t.Fatal("pg_schemas_v1 not registered")
+	}
+	if q.Cadence != pgqueries.CadenceDaily {
+		t.Errorf("cadence: got %v, want CadenceDaily (24h)", q.Cadence)
+	}
+}
+
+func TestSchemasCollectorExcludesSystemSchemas(t *testing.T) {
+	q := pgqueries.ByID("pg_schemas_v1")
+	if q == nil {
+		t.Fatal("pg_schemas_v1 not registered")
+	}
+	sql := strings.ToLower(q.SQL)
+	for _, schema := range []string{"pg_catalog", "information_schema", "pg_toast", "pg_temp_"} {
+		if !strings.Contains(sql, schema) {
+			t.Errorf("pg_schemas_v1 must filter out %q", schema)
+		}
+	}
+}
+
+func TestSchemasCollectorHasOrderBy(t *testing.T) {
+	q := pgqueries.ByID("pg_schemas_v1")
+	if q == nil {
+		t.Fatal("pg_schemas_v1 not registered")
+	}
+	if !containsCI(q.SQL, "ORDER BY") {
+		t.Error("pg_schemas_v1 must have ORDER BY for deterministic output")
+	}
+}
+
+func TestSchemasCollectorNoSelectStar(t *testing.T) {
+	q := pgqueries.ByID("pg_schemas_v1")
+	if q == nil {
+		t.Fatal("pg_schemas_v1 not registered")
+	}
+	if strings.Contains(q.SQL, "SELECT *") || strings.Contains(q.SQL, "select *") {
+		t.Error("pg_schemas_v1 must not use SELECT *")
+	}
+}
+
+func TestSchemasCollectorOutputColumns(t *testing.T) {
+	q := pgqueries.ByID("pg_schemas_v1")
+	if q == nil {
+		t.Fatal("pg_schemas_v1 not registered")
+	}
+	sql := strings.ToLower(q.SQL)
+
+	for _, col := range []string{"nspname", "nspowner", "is_default"} {
+		if !strings.Contains(sql, col) {
+			t.Errorf("pg_schemas_v1 must include column %q", col)
+		}
+	}
+}
+
+func TestSchemasCollectorUsesPgNamespace(t *testing.T) {
+	q := pgqueries.ByID("pg_schemas_v1")
+	if q == nil {
+		t.Fatal("pg_schemas_v1 not registered")
+	}
+	if !containsCI(q.SQL, "pg_namespace") {
+		t.Error("pg_schemas_v1 must use pg_namespace")
+	}
+}
+
+func TestSchemasCollectorJoinsRoles(t *testing.T) {
+	q := pgqueries.ByID("pg_schemas_v1")
+	if q == nil {
+		t.Fatal("pg_schemas_v1 not registered")
+	}
+	if !containsCI(q.SQL, "pg_roles") {
+		t.Error("pg_schemas_v1 must join pg_roles for owner name")
+	}
+}
+
+func TestSchemasCollectorResultKind(t *testing.T) {
+	q := pgqueries.ByID("pg_schemas_v1")
+	if q == nil {
+		t.Fatal("pg_schemas_v1 not registered")
+	}
+	if q.ResultKind != pgqueries.ResultRowset {
+		t.Errorf("ResultKind: got %q, want rowset", q.ResultKind)
+	}
+}
+
+func TestSchemasCollectorIncludedOnPG14(t *testing.T) {
+	filtered := pgqueries.Filter(pgqueries.FilterParams{
+		PGMajorVersion: 14,
+		Extensions:     []string{},
+	})
+	found := false
+	for _, q := range filtered {
+		if q.ID == "pg_schemas_v1" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("pg_schemas_v1 must be included on PG 14")
+	}
+}
+
 // --- Updated catalog count ---
 
-func TestSchemaPhase1FullCatalogCount(t *testing.T) {
+func TestSchemaPhase2CatalogCount(t *testing.T) {
 	all := pgqueries.All()
-	// 29 existing + 4 schema = 33 minimum
-	if len(all) < 33 {
-		t.Errorf("catalog has %d collectors, want at least 33", len(all))
+	// 29 existing + 5 schema = 34 minimum
+	if len(all) < 34 {
+		t.Errorf("catalog has %d collectors, want at least 34", len(all))
 	}
 }
 
