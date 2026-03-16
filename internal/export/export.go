@@ -7,6 +7,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/elevarq/arq-signals/internal/collector"
 	"github.com/elevarq/arq-signals/internal/db"
 	"github.com/elevarq/arq-signals/internal/safety"
 	"github.com/elevarq/arq-signals/snapshot"
@@ -21,15 +22,22 @@ type Options struct {
 
 // Builder creates a ZIP export of collected data.
 type Builder struct {
-	store              *db.DB
-	instanceID         string
-	unsafeMode         bool
-	unsafeReasonsFunc  func() []string
+	store             *db.DB
+	instanceID        string
+	unsafeMode        bool
+	unsafeReasonsFunc func() []string
+	collectorStatus   *collector.CollectorStatusFile
 }
 
 // NewBuilder creates a new export Builder.
 func NewBuilder(store *db.DB, instanceID string) *Builder {
 	return &Builder{store: store, instanceID: instanceID}
+}
+
+// SetCollectorStatus provides collector execution status data for
+// inclusion in the export ZIP as collector_status.json.
+func (b *Builder) SetCollectorStatus(status *collector.CollectorStatusFile) {
+	b.collectorStatus = status
 }
 
 // SetUnsafeMode marks the export metadata as collected in unsafe mode.
@@ -48,6 +56,11 @@ func (b *Builder) WriteTo(w io.Writer, opts Options) error {
 	// metadata.json
 	if err := b.writeMetadata(zw); err != nil {
 		return fmt.Errorf("write metadata.json: %w", err)
+	}
+
+	// collector_status.json
+	if err := b.writeCollectorStatus(zw); err != nil {
+		return fmt.Errorf("write collector_status.json: %w", err)
 	}
 
 	// snapshots.ndjson
@@ -94,6 +107,26 @@ func (b *Builder) writeMetadata(zw *zip.Writer) error {
 		}
 	}
 	return json.NewEncoder(f).Encode(data)
+}
+
+func (b *Builder) writeCollectorStatus(zw *zip.Writer) error {
+	f, err := zw.Create("collector_status.json")
+	if err != nil {
+		return err
+	}
+
+	if b.collectorStatus != nil {
+		b.collectorStatus.Sort()
+		return json.NewEncoder(f).Encode(b.collectorStatus)
+	}
+
+	// No status data provided — write a minimal empty file
+	empty := collector.CollectorStatusFile{
+		SchemaVersion: "1",
+		CollectedAt:   time.Now().UTC().Format(time.RFC3339),
+		Collectors:    []collector.CollectorStatus{},
+	}
+	return json.NewEncoder(f).Encode(empty)
 }
 
 func (b *Builder) writeQueryCatalog(zw *zip.Writer) error {
