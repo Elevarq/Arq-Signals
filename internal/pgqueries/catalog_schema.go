@@ -11,6 +11,7 @@ import "time"
 //   specifications/collectors/pg_constraints_v1.md
 //   specifications/collectors/pg_indexes_v1.md
 //   specifications/collectors/pg_stats_v1.md
+//   specifications/collectors/pg_columns_v1.md
 
 // SchemaFilter is the standard WHERE clause that excludes PostgreSQL
 // internal schemas from all schema metadata collectors.
@@ -114,6 +115,42 @@ func init() {
 		  AND schemaname NOT LIKE 'pg_temp_%'
 		  AND schemaname NOT LIKE 'pg_toast_temp_%'
 		ORDER BY schemaname, tablename, attname`,
+		ResultKind:     ResultRowset,
+		RetentionClass: RetentionMedium,
+		Timeout:        30 * time.Second,
+		Cadence:        CadenceDaily,
+	})
+
+	// pg_columns_v1: column inventory with data types for user-schema
+	// relations. Uses pg_attribute + pg_class + pg_namespace + pg_attrdef
+	// with format_type() for human-readable type names. Excludes system
+	// columns (attnum <= 0) and dropped columns. Default expression
+	// text is NOT emitted — only the boolean has_default.
+	//
+	// Specification: specifications/collectors/pg_columns_v1.md
+	Register(QueryDef{
+		ID:       "pg_columns_v1",
+		Category: "schema",
+		SQL: `SELECT
+			n.nspname AS schemaname,
+			c.relname,
+			a.attname,
+			a.attnum,
+			format_type(a.atttypid, a.atttypmod) AS typname,
+			NOT a.attnotnull AS is_nullable,
+			d.adrelid IS NOT NULL AS has_default,
+			a.attlen
+		FROM pg_attribute a
+		JOIN pg_class c ON c.oid = a.attrelid
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+		WHERE a.attnum > 0
+		  AND NOT a.attisdropped
+		  AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
+		  AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+		  AND n.nspname NOT LIKE 'pg_temp_%'
+		  AND n.nspname NOT LIKE 'pg_toast_temp_%'
+		ORDER BY n.nspname, c.relname, a.attnum`,
 		ResultKind:     ResultRowset,
 		RetentionClass: RetentionMedium,
 		Timeout:        30 * time.Second,

@@ -403,13 +403,188 @@ func TestStatsCollectorIncludedOnPG14(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Schema Metadata Collectors — Phase 1 Step 4: pg_columns_v1
+// ---------------------------------------------------------------------------
+
+// --- pg_columns_v1 registration ---
+
+func TestColumnsCollectorRegistered(t *testing.T) {
+	q := pgqueries.ByID("pg_columns_v1")
+	if q == nil {
+		t.Fatal("pg_columns_v1 is not registered")
+	}
+	if q.Category != "schema" {
+		t.Errorf("category: got %q, want %q", q.Category, "schema")
+	}
+}
+
+func TestColumnsCollectorPassesLinter(t *testing.T) {
+	q := pgqueries.ByID("pg_columns_v1")
+	if q == nil {
+		t.Fatal("pg_columns_v1 not registered")
+	}
+	if err := pgqueries.LintQuery(q.SQL); err != nil {
+		t.Errorf("pg_columns_v1 failed linter: %v", err)
+	}
+}
+
+func TestColumnsCollectorCadence(t *testing.T) {
+	q := pgqueries.ByID("pg_columns_v1")
+	if q == nil {
+		t.Fatal("pg_columns_v1 not registered")
+	}
+	if q.Cadence != pgqueries.CadenceDaily {
+		t.Errorf("cadence: got %v, want CadenceDaily (24h)", q.Cadence)
+	}
+}
+
+func TestColumnsCollectorExcludesSystemSchemas(t *testing.T) {
+	q := pgqueries.ByID("pg_columns_v1")
+	if q == nil {
+		t.Fatal("pg_columns_v1 not registered")
+	}
+	sql := strings.ToLower(q.SQL)
+	for _, schema := range []string{"pg_catalog", "information_schema", "pg_toast", "pg_temp_"} {
+		if !strings.Contains(sql, schema) {
+			t.Errorf("pg_columns_v1 must filter out %q", schema)
+		}
+	}
+}
+
+func TestColumnsCollectorHasOrderBy(t *testing.T) {
+	q := pgqueries.ByID("pg_columns_v1")
+	if q == nil {
+		t.Fatal("pg_columns_v1 not registered")
+	}
+	if !containsCI(q.SQL, "ORDER BY") {
+		t.Error("pg_columns_v1 must have ORDER BY for deterministic output")
+	}
+}
+
+func TestColumnsCollectorNoSelectStar(t *testing.T) {
+	q := pgqueries.ByID("pg_columns_v1")
+	if q == nil {
+		t.Fatal("pg_columns_v1 not registered")
+	}
+	if strings.Contains(q.SQL, "SELECT *") || strings.Contains(q.SQL, "select *") {
+		t.Error("pg_columns_v1 must not use SELECT *")
+	}
+}
+
+func TestColumnsCollectorOutputColumns(t *testing.T) {
+	q := pgqueries.ByID("pg_columns_v1")
+	if q == nil {
+		t.Fatal("pg_columns_v1 not registered")
+	}
+
+	sql := strings.ToLower(q.SQL)
+
+	required := []string{
+		"schemaname", "relname", "attname", "attnum",
+		"typname", "is_nullable", "has_default", "attlen",
+	}
+
+	for _, col := range required {
+		if !strings.Contains(sql, col) {
+			t.Errorf("pg_columns_v1 must include column %q", col)
+		}
+	}
+}
+
+func TestColumnsCollectorUsesFormatType(t *testing.T) {
+	q := pgqueries.ByID("pg_columns_v1")
+	if q == nil {
+		t.Fatal("pg_columns_v1 not registered")
+	}
+	if !containsCI(q.SQL, "format_type") {
+		t.Error("pg_columns_v1 must use format_type() for human-readable type names")
+	}
+}
+
+func TestColumnsCollectorUsesPgAttribute(t *testing.T) {
+	q := pgqueries.ByID("pg_columns_v1")
+	if q == nil {
+		t.Fatal("pg_columns_v1 not registered")
+	}
+	if !containsCI(q.SQL, "pg_attribute") {
+		t.Error("pg_columns_v1 must use pg_attribute (PostgreSQL-native catalog)")
+	}
+}
+
+func TestColumnsCollectorExcludesDefaultText(t *testing.T) {
+	q := pgqueries.ByID("pg_columns_v1")
+	if q == nil {
+		t.Fatal("pg_columns_v1 not registered")
+	}
+	sql := strings.ToLower(q.SQL)
+	// pg_get_expr would extract the default expression text — must not appear
+	if strings.Contains(sql, "pg_get_expr") {
+		t.Error("pg_columns_v1 must NOT use pg_get_expr (default expression may contain sensitive values)")
+	}
+	// column_default from information_schema is also not allowed
+	if strings.Contains(sql, "column_default") {
+		t.Error("pg_columns_v1 must NOT include column_default text")
+	}
+}
+
+func TestColumnsCollectorExcludesSystemColumns(t *testing.T) {
+	q := pgqueries.ByID("pg_columns_v1")
+	if q == nil {
+		t.Fatal("pg_columns_v1 not registered")
+	}
+	sql := strings.ToLower(q.SQL)
+	// Must filter attnum > 0 (system columns like ctid, xmin have attnum <= 0)
+	if !strings.Contains(sql, "attnum > 0") {
+		t.Error("pg_columns_v1 must filter attnum > 0 to exclude system columns")
+	}
+}
+
+func TestColumnsCollectorExcludesDroppedColumns(t *testing.T) {
+	q := pgqueries.ByID("pg_columns_v1")
+	if q == nil {
+		t.Fatal("pg_columns_v1 not registered")
+	}
+	sql := strings.ToLower(q.SQL)
+	if !strings.Contains(sql, "attisdropped") {
+		t.Error("pg_columns_v1 must filter out dropped columns")
+	}
+}
+
+func TestColumnsCollectorResultKind(t *testing.T) {
+	q := pgqueries.ByID("pg_columns_v1")
+	if q == nil {
+		t.Fatal("pg_columns_v1 not registered")
+	}
+	if q.ResultKind != pgqueries.ResultRowset {
+		t.Errorf("ResultKind: got %q, want rowset", q.ResultKind)
+	}
+}
+
+func TestColumnsCollectorIncludedOnPG14(t *testing.T) {
+	filtered := pgqueries.Filter(pgqueries.FilterParams{
+		PGMajorVersion: 14,
+		Extensions:     []string{},
+	})
+	found := false
+	for _, q := range filtered {
+		if q.ID == "pg_columns_v1" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("pg_columns_v1 must be included on PG 14")
+	}
+}
+
 // --- Updated catalog count ---
 
-func TestSchemaCatalogCountWithStats(t *testing.T) {
+func TestSchemaPhase1FullCatalogCount(t *testing.T) {
 	all := pgqueries.All()
-	// 29 existing + 3 schema = 32 minimum
-	if len(all) < 32 {
-		t.Errorf("catalog has %d collectors, want at least 32", len(all))
+	// 29 existing + 4 schema = 33 minimum
+	if len(all) < 33 {
+		t.Errorf("catalog has %d collectors, want at least 33", len(all))
 	}
 }
 

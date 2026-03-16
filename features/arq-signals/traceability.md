@@ -67,3 +67,4 @@
 | R057 | Schema constraint inventory | TC-SIG-050 | COVERED | BEHAVIORAL | pg_constraints_v1: registered, linter pass, 24h cadence, schema filter, unnest/ordinality multi-column, deterministic order |
 | R058 | Schema index definitions | TC-SIG-050 | COVERED | BEHAVIORAL | pg_indexes_v1: registered, linter pass, 24h cadence, schema filter, indexdef included, COALESCE tablespace |
 | R059 | Column planner statistics | TC-SIG-051 | COVERED | BEHAVIORAL | pg_stats_v1: registered, linter pass, 24h cadence, schema filter, no data samples, n_distinct/correlation included |
+| R060 | Column inventory with types | TC-SIG-052 | COVERED | BEHAVIORAL | pg_columns_v1: registered, linter pass, 24h cadence, schema filter, pg_attribute native, format_type, no default text, excludes system/dropped columns |
