@@ -1586,13 +1586,134 @@ func TestFunctionsDefinitionsCollectorMinPGVersion(t *testing.T) {
 	}
 }
 
-// --- Updated catalog count ---
+// ---------------------------------------------------------------------------
+// Schema Metadata Collectors — Phase 2 Step 11: pg_sequences_v1
+// ---------------------------------------------------------------------------
 
-func TestSchemaPhase2FunctionsCatalogCount(t *testing.T) {
+func TestSequencesCollectorRegistered(t *testing.T) {
+	q := pgqueries.ByID("pg_sequences_v1")
+	if q == nil {
+		t.Fatal("pg_sequences_v1 is not registered")
+	}
+	if q.Category != "schema" {
+		t.Errorf("category: got %q, want %q", q.Category, "schema")
+	}
+}
+
+func TestSequencesCollectorPassesLinter(t *testing.T) {
+	q := pgqueries.ByID("pg_sequences_v1")
+	if q == nil {
+		t.Fatal("pg_sequences_v1 not registered")
+	}
+	if err := pgqueries.LintQuery(q.SQL); err != nil {
+		t.Errorf("pg_sequences_v1 failed linter: %v", err)
+	}
+}
+
+func TestSequencesCollectorCadence(t *testing.T) {
+	q := pgqueries.ByID("pg_sequences_v1")
+	if q == nil {
+		t.Fatal("pg_sequences_v1 not registered")
+	}
+	if q.Cadence != pgqueries.CadenceDaily {
+		t.Errorf("cadence: got %v, want CadenceDaily (24h)", q.Cadence)
+	}
+}
+
+func TestSequencesCollectorExcludesSystemSchemas(t *testing.T) {
+	q := pgqueries.ByID("pg_sequences_v1")
+	if q == nil {
+		t.Fatal("pg_sequences_v1 not registered")
+	}
+	sql := strings.ToLower(q.SQL)
+	for _, schema := range []string{"pg_catalog", "information_schema", "pg_toast", "pg_temp_"} {
+		if !strings.Contains(sql, schema) {
+			t.Errorf("pg_sequences_v1 must filter out %q", schema)
+		}
+	}
+}
+
+func TestSequencesCollectorHasOrderBy(t *testing.T) {
+	q := pgqueries.ByID("pg_sequences_v1")
+	if q == nil {
+		t.Fatal("pg_sequences_v1 not registered")
+	}
+	if !containsCI(q.SQL, "ORDER BY") {
+		t.Error("pg_sequences_v1 must have ORDER BY for deterministic output")
+	}
+}
+
+func TestSequencesCollectorNoSelectStar(t *testing.T) {
+	q := pgqueries.ByID("pg_sequences_v1")
+	if q == nil {
+		t.Fatal("pg_sequences_v1 not registered")
+	}
+	if strings.Contains(q.SQL, "SELECT *") || strings.Contains(q.SQL, "select *") {
+		t.Error("pg_sequences_v1 must not use SELECT *")
+	}
+}
+
+func TestSequencesCollectorOutputColumns(t *testing.T) {
+	q := pgqueries.ByID("pg_sequences_v1")
+	if q == nil {
+		t.Fatal("pg_sequences_v1 not registered")
+	}
+	sql := strings.ToLower(q.SQL)
+
+	for _, col := range []string{
+		"schemaname", "sequencename", "data_type", "start_value",
+		"min_value", "max_value", "increment_by", "cycle", "last_value",
+	} {
+		if !strings.Contains(sql, col) {
+			t.Errorf("pg_sequences_v1 must include column %q", col)
+		}
+	}
+}
+
+func TestSequencesCollectorUsesPgSequences(t *testing.T) {
+	q := pgqueries.ByID("pg_sequences_v1")
+	if q == nil {
+		t.Fatal("pg_sequences_v1 not registered")
+	}
+	if !containsCI(q.SQL, "pg_sequences") {
+		t.Error("pg_sequences_v1 must use pg_sequences view")
+	}
+}
+
+func TestSequencesCollectorResultKind(t *testing.T) {
+	q := pgqueries.ByID("pg_sequences_v1")
+	if q == nil {
+		t.Fatal("pg_sequences_v1 not registered")
+	}
+	if q.ResultKind != pgqueries.ResultRowset {
+		t.Errorf("ResultKind: got %q, want rowset", q.ResultKind)
+	}
+}
+
+func TestSequencesCollectorIncludedOnPG14(t *testing.T) {
+	filtered := pgqueries.Filter(pgqueries.FilterParams{
+		PGMajorVersion: 14,
+		Extensions:     []string{},
+	})
+	found := false
+	for _, q := range filtered {
+		if q.ID == "pg_sequences_v1" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("pg_sequences_v1 must be included on PG 14")
+	}
+}
+
+// --- Final catalog count ---
+
+func TestSchemaPhase2CompleteCatalogCount(t *testing.T) {
 	all := pgqueries.All()
-	// 29 existing + 5 Phase1/2a + 2 views + 2 matviews + 1 partitions + 2 triggers + 2 functions = 43
-	if len(all) < 43 {
-		t.Errorf("catalog has %d collectors, want at least 43", len(all))
+	// 29 baseline + 15 schema collectors = 44 minimum
+	if len(all) < 44 {
+		t.Errorf("catalog has %d collectors, want at least 44", len(all))
 	}
 }
 

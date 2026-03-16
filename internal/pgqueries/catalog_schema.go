@@ -455,4 +455,33 @@ func init() {
 		Timeout:        30 * time.Second,
 		Cadence:        CadenceDaily,
 	})
+
+	// pg_sequences_v1: sequence inventory and health.
+	// Provides identity, configuration, and current value for
+	// exhaustion detection and identity column monitoring.
+	//
+	// Specification: specifications/collectors/pg_sequences_v1.md
+	Register(QueryDef{
+		ID:       "pg_sequences_v1",
+		Category: "schema",
+		SQL: `SELECT
+			schemaname,
+			sequencename,
+			data_type,
+			start_value,
+			min_value,
+			max_value,
+			increment_by,
+			cycle,
+			last_value
+		FROM pg_sequences
+		WHERE schemaname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+		  AND schemaname NOT LIKE 'pg_temp_%'
+		  AND schemaname NOT LIKE 'pg_toast_temp_%'
+		ORDER BY schemaname, sequencename`,
+		ResultKind:     ResultRowset,
+		RetentionClass: RetentionMedium,
+		Timeout:        10 * time.Second,
+		Cadence:        CadenceDaily,
+	})
 }
