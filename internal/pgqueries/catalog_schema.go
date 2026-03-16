@@ -236,4 +236,57 @@ func init() {
 		Timeout:        30 * time.Second,
 		Cadence:        CadenceDaily,
 	})
+
+	// pg_matviews_v1: materialized view inventory (inventory mode).
+	// Lists all user-schema matviews with owner, populated status,
+	// and index presence. Definition text excluded by default.
+	//
+	// Specification: specifications/collectors/pg_matviews_v1.md
+	Register(QueryDef{
+		ID:       "pg_matviews_v1",
+		Category: "schema",
+		SQL: `SELECT
+			schemaname,
+			matviewname,
+			matviewowner,
+			ispopulated,
+			hasindexes
+		FROM pg_matviews
+		WHERE schemaname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+		  AND schemaname NOT LIKE 'pg_temp_%'
+		  AND schemaname NOT LIKE 'pg_toast_temp_%'
+		ORDER BY schemaname, matviewname`,
+		ResultKind:     ResultRowset,
+		RetentionClass: RetentionMedium,
+		Timeout:        10 * time.Second,
+		Cadence:        CadenceDaily,
+	})
+
+	// pg_matviews_definitions_v1: materialized view inventory with
+	// definition text (definition mode). Includes inventory columns
+	// plus full matview SQL from pg_get_viewdef().
+	//
+	// Specification: specifications/collectors/pg_matviews_v1.md
+	Register(QueryDef{
+		ID:       "pg_matviews_definitions_v1",
+		Category: "schema",
+		SQL: `SELECT
+			m.schemaname,
+			m.matviewname,
+			m.matviewowner,
+			m.ispopulated,
+			m.hasindexes,
+			pg_get_viewdef(c.oid, true) AS definition
+		FROM pg_matviews m
+		JOIN pg_class c ON c.relname = m.matviewname
+		JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = m.schemaname
+		WHERE m.schemaname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+		  AND m.schemaname NOT LIKE 'pg_temp_%'
+		  AND m.schemaname NOT LIKE 'pg_toast_temp_%'
+		ORDER BY m.schemaname, m.matviewname`,
+		ResultKind:     ResultRowset,
+		RetentionClass: RetentionMedium,
+		Timeout:        30 * time.Second,
+		Cadence:        CadenceDaily,
+	})
 }

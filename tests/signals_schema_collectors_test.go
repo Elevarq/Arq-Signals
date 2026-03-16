@@ -881,13 +881,184 @@ func TestViewsDefinitionsCollectorIncludesDefinition(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Schema Metadata Collectors — Phase 2 Step 7: pg_matviews_v1
+// ---------------------------------------------------------------------------
+
+// --- pg_matviews_v1 inventory mode ---
+
+func TestMatviewsCollectorRegistered(t *testing.T) {
+	q := pgqueries.ByID("pg_matviews_v1")
+	if q == nil {
+		t.Fatal("pg_matviews_v1 is not registered")
+	}
+	if q.Category != "schema" {
+		t.Errorf("category: got %q, want %q", q.Category, "schema")
+	}
+}
+
+func TestMatviewsCollectorPassesLinter(t *testing.T) {
+	q := pgqueries.ByID("pg_matviews_v1")
+	if q == nil {
+		t.Fatal("pg_matviews_v1 not registered")
+	}
+	if err := pgqueries.LintQuery(q.SQL); err != nil {
+		t.Errorf("pg_matviews_v1 failed linter: %v", err)
+	}
+}
+
+func TestMatviewsCollectorCadence(t *testing.T) {
+	q := pgqueries.ByID("pg_matviews_v1")
+	if q == nil {
+		t.Fatal("pg_matviews_v1 not registered")
+	}
+	if q.Cadence != pgqueries.CadenceDaily {
+		t.Errorf("cadence: got %v, want CadenceDaily (24h)", q.Cadence)
+	}
+}
+
+func TestMatviewsCollectorExcludesSystemSchemas(t *testing.T) {
+	q := pgqueries.ByID("pg_matviews_v1")
+	if q == nil {
+		t.Fatal("pg_matviews_v1 not registered")
+	}
+	sql := strings.ToLower(q.SQL)
+	for _, schema := range []string{"pg_catalog", "information_schema", "pg_toast", "pg_temp_"} {
+		if !strings.Contains(sql, schema) {
+			t.Errorf("pg_matviews_v1 must filter out %q", schema)
+		}
+	}
+}
+
+func TestMatviewsCollectorHasOrderBy(t *testing.T) {
+	q := pgqueries.ByID("pg_matviews_v1")
+	if q == nil {
+		t.Fatal("pg_matviews_v1 not registered")
+	}
+	if !containsCI(q.SQL, "ORDER BY") {
+		t.Error("pg_matviews_v1 must have ORDER BY for deterministic output")
+	}
+}
+
+func TestMatviewsCollectorNoSelectStar(t *testing.T) {
+	q := pgqueries.ByID("pg_matviews_v1")
+	if q == nil {
+		t.Fatal("pg_matviews_v1 not registered")
+	}
+	if strings.Contains(q.SQL, "SELECT *") || strings.Contains(q.SQL, "select *") {
+		t.Error("pg_matviews_v1 must not use SELECT *")
+	}
+}
+
+func TestMatviewsCollectorInventoryColumns(t *testing.T) {
+	q := pgqueries.ByID("pg_matviews_v1")
+	if q == nil {
+		t.Fatal("pg_matviews_v1 not registered")
+	}
+	sql := strings.ToLower(q.SQL)
+
+	for _, col := range []string{"schemaname", "matviewname", "matviewowner", "ispopulated", "hasindexes"} {
+		if !strings.Contains(sql, col) {
+			t.Errorf("pg_matviews_v1 must include column %q", col)
+		}
+	}
+}
+
+func TestMatviewsCollectorInventoryModeNoDefinition(t *testing.T) {
+	q := pgqueries.ByID("pg_matviews_v1")
+	if q == nil {
+		t.Fatal("pg_matviews_v1 not registered")
+	}
+	sql := strings.ToLower(q.SQL)
+
+	if strings.Contains(sql, "pg_get_viewdef") {
+		t.Error("inventory mode must not include pg_get_viewdef")
+	}
+	if strings.Contains(sql, "as definition") {
+		t.Error("inventory mode must not include a 'definition' output column")
+	}
+}
+
+func TestMatviewsCollectorUsesPgMatviews(t *testing.T) {
+	q := pgqueries.ByID("pg_matviews_v1")
+	if q == nil {
+		t.Fatal("pg_matviews_v1 not registered")
+	}
+	if !containsCI(q.SQL, "pg_matviews") {
+		t.Error("pg_matviews_v1 must query from pg_matviews")
+	}
+}
+
+func TestMatviewsCollectorResultKind(t *testing.T) {
+	q := pgqueries.ByID("pg_matviews_v1")
+	if q == nil {
+		t.Fatal("pg_matviews_v1 not registered")
+	}
+	if q.ResultKind != pgqueries.ResultRowset {
+		t.Errorf("ResultKind: got %q, want rowset", q.ResultKind)
+	}
+}
+
+func TestMatviewsCollectorIncludedOnPG14(t *testing.T) {
+	filtered := pgqueries.Filter(pgqueries.FilterParams{
+		PGMajorVersion: 14,
+		Extensions:     []string{},
+	})
+	found := false
+	for _, q := range filtered {
+		if q.ID == "pg_matviews_v1" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("pg_matviews_v1 must be included on PG 14")
+	}
+}
+
+// --- pg_matviews_definitions_v1 definition mode ---
+
+func TestMatviewsDefinitionsCollectorRegistered(t *testing.T) {
+	q := pgqueries.ByID("pg_matviews_definitions_v1")
+	if q == nil {
+		t.Fatal("pg_matviews_definitions_v1 is not registered")
+	}
+	if q.Category != "schema" {
+		t.Errorf("category: got %q, want %q", q.Category, "schema")
+	}
+}
+
+func TestMatviewsDefinitionsCollectorPassesLinter(t *testing.T) {
+	q := pgqueries.ByID("pg_matviews_definitions_v1")
+	if q == nil {
+		t.Fatal("pg_matviews_definitions_v1 not registered")
+	}
+	if err := pgqueries.LintQuery(q.SQL); err != nil {
+		t.Errorf("pg_matviews_definitions_v1 failed linter: %v", err)
+	}
+}
+
+func TestMatviewsDefinitionsCollectorIncludesDefinition(t *testing.T) {
+	q := pgqueries.ByID("pg_matviews_definitions_v1")
+	if q == nil {
+		t.Fatal("pg_matviews_definitions_v1 not registered")
+	}
+	sql := strings.ToLower(q.SQL)
+
+	for _, col := range []string{"schemaname", "matviewname", "matviewowner", "ispopulated", "definition"} {
+		if !strings.Contains(sql, col) {
+			t.Errorf("pg_matviews_definitions_v1 must include column %q", col)
+		}
+	}
+}
+
 // --- Updated catalog count ---
 
-func TestSchemaPhase2ViewsCatalogCount(t *testing.T) {
+func TestSchemaPhase2MatviewsCatalogCount(t *testing.T) {
 	all := pgqueries.All()
-	// 29 existing + 5 Phase 1/2a + 2 views (inventory + definitions) = 36 minimum
-	if len(all) < 36 {
-		t.Errorf("catalog has %d collectors, want at least 36", len(all))
+	// 29 existing + 5 Phase 1/2a + 2 views + 2 matviews = 38 minimum
+	if len(all) < 38 {
+		t.Errorf("catalog has %d collectors, want at least 38", len(all))
 	}
 }
 

@@ -71,3 +71,5 @@
 | R061 | Schema namespace inventory | TC-SIG-053 | COVERED | BEHAVIORAL | pg_schemas_v1: registered, linter pass, 24h cadence, schema filter, pg_namespace + pg_roles join, nspname/nspowner/is_default |
 | R062 | View inventory | TC-SIG-054 | COVERED | BEHAVIORAL | pg_views_v1: registered, linter pass, 24h cadence, schema filter, inventory mode (no definition), pg_views source |
 | R063 | View definitions | TC-SIG-054 | COVERED | BEHAVIORAL | pg_views_definitions_v1: registered, linter pass, includes pg_get_viewdef definition column, separate from inventory |
+| R064 | Materialized view inventory | TC-SIG-055 | COVERED | BEHAVIORAL | pg_matviews_v1: registered, linter pass, 24h cadence, schema filter, inventory mode, ispopulated + hasindexes |
+| R065 | Materialized view definitions | TC-SIG-055 | COVERED | BEHAVIORAL | pg_matviews_definitions_v1: registered, linter pass, includes definition column, separate from inventory |
