@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/elevarq/arq-signals/internal/pgqueries"
@@ -163,4 +164,21 @@ func containsCI(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// TestSnapshotIdentityFieldsPresent verifies that the snapshot
+// contract includes the fields required by the Arq Analyzer for
+// database key derivation.
+// Spec: Arq specifications/arq-analyzer-v0.1/snapshot-identity.md
+func TestSnapshotIdentityFieldsPresent(t *testing.T) {
+	// metadata.json must include instance_id
+	q := pgqueries.ByID("server_identity_v1")
+	if q == nil {
+		t.Fatal("server_identity_v1 not registered — required for snapshot identity")
+	}
+
+	sql := strings.ToLower(q.SQL)
+	if !strings.Contains(sql, "database_name") {
+		t.Error("server_identity_v1 must include database_name for Arq Analyzer compliance")
+	}
 }
