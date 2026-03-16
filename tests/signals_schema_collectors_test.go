@@ -1052,13 +1052,154 @@ func TestMatviewsDefinitionsCollectorIncludesDefinition(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Schema Metadata Collectors — Phase 2 Step 8: pg_partitions_v1
+// ---------------------------------------------------------------------------
+
+func TestPartitionsCollectorRegistered(t *testing.T) {
+	q := pgqueries.ByID("pg_partitions_v1")
+	if q == nil {
+		t.Fatal("pg_partitions_v1 is not registered")
+	}
+	if q.Category != "schema" {
+		t.Errorf("category: got %q, want %q", q.Category, "schema")
+	}
+}
+
+func TestPartitionsCollectorPassesLinter(t *testing.T) {
+	q := pgqueries.ByID("pg_partitions_v1")
+	if q == nil {
+		t.Fatal("pg_partitions_v1 not registered")
+	}
+	if err := pgqueries.LintQuery(q.SQL); err != nil {
+		t.Errorf("pg_partitions_v1 failed linter: %v", err)
+	}
+}
+
+func TestPartitionsCollectorCadence(t *testing.T) {
+	q := pgqueries.ByID("pg_partitions_v1")
+	if q == nil {
+		t.Fatal("pg_partitions_v1 not registered")
+	}
+	if q.Cadence != pgqueries.CadenceDaily {
+		t.Errorf("cadence: got %v, want CadenceDaily (24h)", q.Cadence)
+	}
+}
+
+func TestPartitionsCollectorExcludesSystemSchemas(t *testing.T) {
+	q := pgqueries.ByID("pg_partitions_v1")
+	if q == nil {
+		t.Fatal("pg_partitions_v1 not registered")
+	}
+	sql := strings.ToLower(q.SQL)
+	for _, schema := range []string{"pg_catalog", "information_schema", "pg_toast", "pg_temp_"} {
+		if !strings.Contains(sql, schema) {
+			t.Errorf("pg_partitions_v1 must filter out %q", schema)
+		}
+	}
+}
+
+func TestPartitionsCollectorHasOrderBy(t *testing.T) {
+	q := pgqueries.ByID("pg_partitions_v1")
+	if q == nil {
+		t.Fatal("pg_partitions_v1 not registered")
+	}
+	if !containsCI(q.SQL, "ORDER BY") {
+		t.Error("pg_partitions_v1 must have ORDER BY for deterministic output")
+	}
+}
+
+func TestPartitionsCollectorNoSelectStar(t *testing.T) {
+	q := pgqueries.ByID("pg_partitions_v1")
+	if q == nil {
+		t.Fatal("pg_partitions_v1 not registered")
+	}
+	if strings.Contains(q.SQL, "SELECT *") || strings.Contains(q.SQL, "select *") {
+		t.Error("pg_partitions_v1 must not use SELECT *")
+	}
+}
+
+func TestPartitionsCollectorOutputColumns(t *testing.T) {
+	q := pgqueries.ByID("pg_partitions_v1")
+	if q == nil {
+		t.Fatal("pg_partitions_v1 not registered")
+	}
+	sql := strings.ToLower(q.SQL)
+
+	for _, col := range []string{
+		"parent_schema", "parent_name", "partition_strategy",
+		"partition_key", "child_schema", "child_name", "child_bounds",
+	} {
+		if !strings.Contains(sql, col) {
+			t.Errorf("pg_partitions_v1 must include column %q", col)
+		}
+	}
+}
+
+func TestPartitionsCollectorUsesPgPartitionedTable(t *testing.T) {
+	q := pgqueries.ByID("pg_partitions_v1")
+	if q == nil {
+		t.Fatal("pg_partitions_v1 not registered")
+	}
+	if !containsCI(q.SQL, "pg_partitioned_table") {
+		t.Error("pg_partitions_v1 must use pg_partitioned_table catalog")
+	}
+}
+
+func TestPartitionsCollectorUsesPgGetPartkeydef(t *testing.T) {
+	q := pgqueries.ByID("pg_partitions_v1")
+	if q == nil {
+		t.Fatal("pg_partitions_v1 not registered")
+	}
+	if !containsCI(q.SQL, "pg_get_partkeydef") {
+		t.Error("pg_partitions_v1 must use pg_get_partkeydef() for partition key")
+	}
+}
+
+func TestPartitionsCollectorUsesPgInherits(t *testing.T) {
+	q := pgqueries.ByID("pg_partitions_v1")
+	if q == nil {
+		t.Fatal("pg_partitions_v1 not registered")
+	}
+	if !containsCI(q.SQL, "pg_inherits") {
+		t.Error("pg_partitions_v1 must use pg_inherits for parent-child relationships")
+	}
+}
+
+func TestPartitionsCollectorResultKind(t *testing.T) {
+	q := pgqueries.ByID("pg_partitions_v1")
+	if q == nil {
+		t.Fatal("pg_partitions_v1 not registered")
+	}
+	if q.ResultKind != pgqueries.ResultRowset {
+		t.Errorf("ResultKind: got %q, want rowset", q.ResultKind)
+	}
+}
+
+func TestPartitionsCollectorIncludedOnPG14(t *testing.T) {
+	filtered := pgqueries.Filter(pgqueries.FilterParams{
+		PGMajorVersion: 14,
+		Extensions:     []string{},
+	})
+	found := false
+	for _, q := range filtered {
+		if q.ID == "pg_partitions_v1" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("pg_partitions_v1 must be included on PG 14")
+	}
+}
+
 // --- Updated catalog count ---
 
-func TestSchemaPhase2MatviewsCatalogCount(t *testing.T) {
+func TestSchemaPhase2PartitionsCatalogCount(t *testing.T) {
 	all := pgqueries.All()
-	// 29 existing + 5 Phase 1/2a + 2 views + 2 matviews = 38 minimum
-	if len(all) < 38 {
-		t.Errorf("catalog has %d collectors, want at least 38", len(all))
+	// 29 existing + 5 Phase 1/2a + 2 views + 2 matviews + 1 partitions = 39 minimum
+	if len(all) < 39 {
+		t.Errorf("catalog has %d collectors, want at least 39", len(all))
 	}
 }
 

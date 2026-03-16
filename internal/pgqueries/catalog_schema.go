@@ -289,4 +289,36 @@ func init() {
 		Timeout:        30 * time.Second,
 		Cadence:        CadenceDaily,
 	})
+
+	// pg_partitions_v1: partition topology — strategy, key, and
+	// parent/child relationships. Parents with no children produce
+	// one row with empty child columns.
+	//
+	// Specification: specifications/collectors/pg_partitions_v1.md
+	Register(QueryDef{
+		ID:       "pg_partitions_v1",
+		Category: "schema",
+		SQL: `SELECT
+			pn.nspname AS parent_schema,
+			pc.relname AS parent_name,
+			pt.partstrat AS partition_strategy,
+			pg_get_partkeydef(pc.oid) AS partition_key,
+			COALESCE(cn.nspname, '') AS child_schema,
+			COALESCE(cc.relname, '') AS child_name,
+			COALESCE(pg_get_expr(cc.relpartbound, cc.oid), '') AS child_bounds
+		FROM pg_partitioned_table pt
+		JOIN pg_class pc ON pc.oid = pt.partrelid
+		JOIN pg_namespace pn ON pn.oid = pc.relnamespace
+		LEFT JOIN pg_inherits i ON i.inhparent = pc.oid
+		LEFT JOIN pg_class cc ON cc.oid = i.inhrelid
+		LEFT JOIN pg_namespace cn ON cn.oid = cc.relnamespace
+		WHERE pn.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+		  AND pn.nspname NOT LIKE 'pg_temp_%'
+		  AND pn.nspname NOT LIKE 'pg_toast_temp_%'
+		ORDER BY pn.nspname, pc.relname, cn.nspname, cc.relname`,
+		ResultKind:     ResultRowset,
+		RetentionClass: RetentionMedium,
+		Timeout:        30 * time.Second,
+		Cadence:        CadenceDaily,
+	})
 }

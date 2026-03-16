@@ -73,3 +73,4 @@
 | R063 | View definitions | TC-SIG-054 | COVERED | BEHAVIORAL | pg_views_definitions_v1: registered, linter pass, includes pg_get_viewdef definition column, separate from inventory |
 | R064 | Materialized view inventory | TC-SIG-055 | COVERED | BEHAVIORAL | pg_matviews_v1: registered, linter pass, 24h cadence, schema filter, inventory mode, ispopulated + hasindexes |
 | R065 | Materialized view definitions | TC-SIG-055 | COVERED | BEHAVIORAL | pg_matviews_definitions_v1: registered, linter pass, includes definition column, separate from inventory |
+| R066 | Partition topology | TC-SIG-056 | COVERED | BEHAVIORAL | pg_partitions_v1: registered, linter pass, 24h cadence, schema filter, pg_partitioned_table + pg_inherits + pg_get_partkeydef, parent/child with bounds |
