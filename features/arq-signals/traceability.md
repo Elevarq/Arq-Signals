@@ -76,3 +76,5 @@
 | R066 | Partition topology | TC-SIG-056 | COVERED | BEHAVIORAL | pg_partitions_v1: registered, linter pass, 24h cadence, schema filter, pg_partitioned_table + pg_inherits + pg_get_partkeydef, parent/child with bounds |
 | R067 | Trigger inventory | TC-SIG-057 | COVERED | BEHAVIORAL | pg_triggers_v1: registered, linter pass, 24h cadence, schema filter, tgtype bitmask, excludes internal triggers, pg_trigger + pg_proc |
 | R068 | Trigger definitions | TC-SIG-057 | COVERED | BEHAVIORAL | pg_triggers_definitions_v1: registered, linter pass, includes pg_get_triggerdef, separate from inventory |
+| R069 | Function/procedure inventory | TC-SIG-058 | COVERED | BEHAVIORAL | pg_functions_v1: registered, linter pass, 24h cadence, PG 11+, schema filter, prokind, no body, pg_proc + pg_language |
+| R070 | Function body definitions | TC-SIG-058 | COVERED | BEHAVIORAL | pg_functions_definitions_v1: registered, linter pass, PG 11+, includes prosrc as body, high sensitivity opt-in |

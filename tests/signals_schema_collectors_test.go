@@ -1381,13 +1381,218 @@ func TestTriggersDefinitionsCollectorIncludesTriggerdef(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Schema Metadata Collectors — Phase 2 Step 10: pg_functions_v1
+// ---------------------------------------------------------------------------
+
+// --- pg_functions_v1 inventory mode ---
+
+func TestFunctionsCollectorRegistered(t *testing.T) {
+	q := pgqueries.ByID("pg_functions_v1")
+	if q == nil {
+		t.Fatal("pg_functions_v1 is not registered")
+	}
+	if q.Category != "schema" {
+		t.Errorf("category: got %q, want %q", q.Category, "schema")
+	}
+}
+
+func TestFunctionsCollectorPassesLinter(t *testing.T) {
+	q := pgqueries.ByID("pg_functions_v1")
+	if q == nil {
+		t.Fatal("pg_functions_v1 not registered")
+	}
+	if err := pgqueries.LintQuery(q.SQL); err != nil {
+		t.Errorf("pg_functions_v1 failed linter: %v", err)
+	}
+}
+
+func TestFunctionsCollectorCadence(t *testing.T) {
+	q := pgqueries.ByID("pg_functions_v1")
+	if q == nil {
+		t.Fatal("pg_functions_v1 not registered")
+	}
+	if q.Cadence != pgqueries.CadenceDaily {
+		t.Errorf("cadence: got %v, want CadenceDaily (24h)", q.Cadence)
+	}
+}
+
+func TestFunctionsCollectorExcludesSystemSchemas(t *testing.T) {
+	q := pgqueries.ByID("pg_functions_v1")
+	if q == nil {
+		t.Fatal("pg_functions_v1 not registered")
+	}
+	sql := strings.ToLower(q.SQL)
+	for _, schema := range []string{"pg_catalog", "information_schema", "pg_toast", "pg_temp_"} {
+		if !strings.Contains(sql, schema) {
+			t.Errorf("pg_functions_v1 must filter out %q", schema)
+		}
+	}
+}
+
+func TestFunctionsCollectorHasOrderBy(t *testing.T) {
+	q := pgqueries.ByID("pg_functions_v1")
+	if q == nil {
+		t.Fatal("pg_functions_v1 not registered")
+	}
+	if !containsCI(q.SQL, "ORDER BY") {
+		t.Error("pg_functions_v1 must have ORDER BY for deterministic output")
+	}
+}
+
+func TestFunctionsCollectorNoSelectStar(t *testing.T) {
+	q := pgqueries.ByID("pg_functions_v1")
+	if q == nil {
+		t.Fatal("pg_functions_v1 not registered")
+	}
+	if strings.Contains(q.SQL, "SELECT *") || strings.Contains(q.SQL, "select *") {
+		t.Error("pg_functions_v1 must not use SELECT *")
+	}
+}
+
+func TestFunctionsCollectorInventoryColumns(t *testing.T) {
+	q := pgqueries.ByID("pg_functions_v1")
+	if q == nil {
+		t.Fatal("pg_functions_v1 not registered")
+	}
+	sql := strings.ToLower(q.SQL)
+
+	for _, col := range []string{
+		"schemaname", "proname", "identity_args", "return_type",
+		"language", "volatility", "security_definer", "is_strict", "prokind",
+	} {
+		if !strings.Contains(sql, col) {
+			t.Errorf("pg_functions_v1 must include column %q", col)
+		}
+	}
+}
+
+func TestFunctionsCollectorInventoryExcludesBody(t *testing.T) {
+	q := pgqueries.ByID("pg_functions_v1")
+	if q == nil {
+		t.Fatal("pg_functions_v1 not registered")
+	}
+	sql := strings.ToLower(q.SQL)
+	if strings.Contains(sql, "prosrc") {
+		t.Error("inventory mode must not include prosrc (function body)")
+	}
+}
+
+func TestFunctionsCollectorUsesPgProc(t *testing.T) {
+	q := pgqueries.ByID("pg_functions_v1")
+	if q == nil {
+		t.Fatal("pg_functions_v1 not registered")
+	}
+	if !containsCI(q.SQL, "pg_proc") {
+		t.Error("pg_functions_v1 must use pg_proc catalog")
+	}
+}
+
+func TestFunctionsCollectorMinPGVersion(t *testing.T) {
+	q := pgqueries.ByID("pg_functions_v1")
+	if q == nil {
+		t.Fatal("pg_functions_v1 not registered")
+	}
+	if q.MinPGVersion != 11 {
+		t.Errorf("MinPGVersion: got %d, want 11 (prokind requires PG 11+)", q.MinPGVersion)
+	}
+}
+
+func TestFunctionsCollectorExcludedOnPG10(t *testing.T) {
+	filtered := pgqueries.Filter(pgqueries.FilterParams{
+		PGMajorVersion: 10,
+		Extensions:     []string{},
+	})
+	for _, q := range filtered {
+		if q.ID == "pg_functions_v1" {
+			t.Error("pg_functions_v1 must be excluded on PG 10")
+		}
+	}
+}
+
+func TestFunctionsCollectorIncludedOnPG14(t *testing.T) {
+	filtered := pgqueries.Filter(pgqueries.FilterParams{
+		PGMajorVersion: 14,
+		Extensions:     []string{},
+	})
+	found := false
+	for _, q := range filtered {
+		if q.ID == "pg_functions_v1" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("pg_functions_v1 must be included on PG 14")
+	}
+}
+
+func TestFunctionsCollectorResultKind(t *testing.T) {
+	q := pgqueries.ByID("pg_functions_v1")
+	if q == nil {
+		t.Fatal("pg_functions_v1 not registered")
+	}
+	if q.ResultKind != pgqueries.ResultRowset {
+		t.Errorf("ResultKind: got %q, want rowset", q.ResultKind)
+	}
+}
+
+// --- pg_functions_definitions_v1 definition mode ---
+
+func TestFunctionsDefinitionsCollectorRegistered(t *testing.T) {
+	q := pgqueries.ByID("pg_functions_definitions_v1")
+	if q == nil {
+		t.Fatal("pg_functions_definitions_v1 is not registered")
+	}
+	if q.Category != "schema" {
+		t.Errorf("category: got %q, want %q", q.Category, "schema")
+	}
+}
+
+func TestFunctionsDefinitionsCollectorPassesLinter(t *testing.T) {
+	q := pgqueries.ByID("pg_functions_definitions_v1")
+	if q == nil {
+		t.Fatal("pg_functions_definitions_v1 not registered")
+	}
+	if err := pgqueries.LintQuery(q.SQL); err != nil {
+		t.Errorf("pg_functions_definitions_v1 failed linter: %v", err)
+	}
+}
+
+func TestFunctionsDefinitionsCollectorIncludesBody(t *testing.T) {
+	q := pgqueries.ByID("pg_functions_definitions_v1")
+	if q == nil {
+		t.Fatal("pg_functions_definitions_v1 not registered")
+	}
+	sql := strings.ToLower(q.SQL)
+
+	for _, col := range []string{"schemaname", "proname", "prokind", "body"} {
+		if !strings.Contains(sql, col) {
+			t.Errorf("pg_functions_definitions_v1 must include column %q", col)
+		}
+	}
+	if !strings.Contains(sql, "prosrc") {
+		t.Error("pg_functions_definitions_v1 must select prosrc as body")
+	}
+}
+
+func TestFunctionsDefinitionsCollectorMinPGVersion(t *testing.T) {
+	q := pgqueries.ByID("pg_functions_definitions_v1")
+	if q == nil {
+		t.Fatal("pg_functions_definitions_v1 not registered")
+	}
+	if q.MinPGVersion != 11 {
+		t.Errorf("MinPGVersion: got %d, want 11", q.MinPGVersion)
+	}
+}
+
 // --- Updated catalog count ---
 
-func TestSchemaPhase2TriggersCatalogCount(t *testing.T) {
+func TestSchemaPhase2FunctionsCatalogCount(t *testing.T) {
 	all := pgqueries.All()
-	// 29 existing + 5 Phase 1/2a + 2 views + 2 matviews + 1 partitions + 2 triggers = 41
-	if len(all) < 41 {
-		t.Errorf("catalog has %d collectors, want at least 41", len(all))
+	// 29 existing + 5 Phase1/2a + 2 views + 2 matviews + 1 partitions + 2 triggers + 2 functions = 43
+	if len(all) < 43 {
+		t.Errorf("catalog has %d collectors, want at least 43", len(all))
 	}
 }
 

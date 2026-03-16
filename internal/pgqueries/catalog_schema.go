@@ -389,4 +389,70 @@ func init() {
 		Timeout:        30 * time.Second,
 		Cadence:        CadenceDaily,
 	})
+
+	// pg_functions_v1: function/procedure inventory (inventory mode).
+	// Signature, return type, language, volatility, security properties.
+	// Function bodies excluded by default (high sensitivity).
+	// Requires PG 11+ for prokind column.
+	//
+	// Specification: specifications/collectors/pg_functions_v1.md
+	Register(QueryDef{
+		ID:           "pg_functions_v1",
+		Category:     "schema",
+		MinPGVersion: 11,
+		SQL: `SELECT
+			n.nspname AS schemaname,
+			p.proname,
+			pg_get_function_identity_arguments(p.oid) AS identity_args,
+			pg_get_function_result(p.oid) AS return_type,
+			l.lanname AS language,
+			p.provolatile AS volatility,
+			p.prosecdef AS security_definer,
+			p.proisstrict AS is_strict,
+			p.prokind
+		FROM pg_proc p
+		JOIN pg_namespace n ON n.oid = p.pronamespace
+		JOIN pg_language l ON l.oid = p.prolang
+		WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+		  AND n.nspname NOT LIKE 'pg_temp_%'
+		  AND n.nspname NOT LIKE 'pg_toast_temp_%'
+		ORDER BY n.nspname, p.proname, pg_get_function_identity_arguments(p.oid)`,
+		ResultKind:     ResultRowset,
+		RetentionClass: RetentionMedium,
+		Timeout:        30 * time.Second,
+		Cadence:        CadenceDaily,
+	})
+
+	// pg_functions_definitions_v1: function/procedure inventory with
+	// body text (definition mode). Includes all inventory columns
+	// plus prosrc. High sensitivity — opt-in only.
+	//
+	// Specification: specifications/collectors/pg_functions_v1.md
+	Register(QueryDef{
+		ID:           "pg_functions_definitions_v1",
+		Category:     "schema",
+		MinPGVersion: 11,
+		SQL: `SELECT
+			n.nspname AS schemaname,
+			p.proname,
+			pg_get_function_identity_arguments(p.oid) AS identity_args,
+			pg_get_function_result(p.oid) AS return_type,
+			l.lanname AS language,
+			p.provolatile AS volatility,
+			p.prosecdef AS security_definer,
+			p.proisstrict AS is_strict,
+			p.prokind,
+			p.prosrc AS body
+		FROM pg_proc p
+		JOIN pg_namespace n ON n.oid = p.pronamespace
+		JOIN pg_language l ON l.oid = p.prolang
+		WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+		  AND n.nspname NOT LIKE 'pg_temp_%'
+		  AND n.nspname NOT LIKE 'pg_toast_temp_%'
+		ORDER BY n.nspname, p.proname, pg_get_function_identity_arguments(p.oid)`,
+		ResultKind:     ResultRowset,
+		RetentionClass: RetentionMedium,
+		Timeout:        30 * time.Second,
+		Cadence:        CadenceDaily,
+	})
 }
