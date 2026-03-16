@@ -64,3 +64,5 @@
 | R054 | Database sizes | TC-SIG-048 | COVERED | BEHAVIORAL | Registered, passes linter |
 | R055 | Largest relations | TC-SIG-048 | COVERED | BEHAVIORAL | Registered, passes linter |
 | R056 | Temp I/O pressure | TC-SIG-048 | COVERED | BEHAVIORAL | Registered, passes linter, no secrets |
+| R057 | Schema constraint inventory | TC-SIG-050 | COVERED | BEHAVIORAL | pg_constraints_v1: registered, linter pass, 24h cadence, schema filter, unnest/ordinality multi-column, deterministic order |
+| R058 | Schema index definitions | TC-SIG-050 | COVERED | BEHAVIORAL | pg_indexes_v1: registered, linter pass, 24h cadence, schema filter, indexdef included, COALESCE tablespace |
