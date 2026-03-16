@@ -466,6 +466,33 @@ func (d *DB) GetAllQueryRuns(since, until string) ([]QueryRun, error) {
 	return d.scanQueryRuns(query, args...)
 }
 
+// GetQueryRunsByTarget returns query runs filtered by target ID and
+// optional time range (MTE-R001).
+func (d *DB) GetQueryRunsByTarget(targetID int64, since, until string) ([]QueryRun, error) {
+	query := "SELECT id, target_id, snapshot_id, query_id, collected_at, pg_version, duration_ms, row_count, error, created_at FROM query_runs WHERE target_id = ?"
+	args := []any{targetID}
+	if since != "" {
+		query += " AND collected_at >= ?"
+		args = append(args, since)
+	}
+	if until != "" {
+		query += " AND collected_at <= ?"
+		args = append(args, until)
+	}
+	query += " ORDER BY collected_at"
+	return d.scanQueryRuns(query, args...)
+}
+
+// GetTargetName returns the name for a target ID, or empty string.
+func (d *DB) GetTargetName(targetID int64) (string, error) {
+	var name string
+	err := d.sql.QueryRow("SELECT name FROM targets WHERE id = ?", targetID).Scan(&name)
+	if err != nil {
+		return "", err
+	}
+	return name, nil
+}
+
 func (d *DB) scanQueryRuns(query string, args ...any) ([]QueryRun, error) {
 	rows, err := d.sql.Query(query, args...)
 	if err != nil {

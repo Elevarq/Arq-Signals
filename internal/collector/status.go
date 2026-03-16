@@ -2,7 +2,10 @@ package collector
 
 import (
 	"sort"
+	"strings"
 	"time"
+
+	"github.com/elevarq/arq-signals/internal/db"
 )
 
 // CollectorStatus records the execution outcome of a single collector.
@@ -21,9 +24,10 @@ type CollectorStatus struct {
 
 // CollectorStatusFile is the top-level structure for collector_status.json.
 type CollectorStatusFile struct {
-	SchemaVersion string             `json:"schema_version"`
-	CollectedAt   string             `json:"collected_at"`
-	Collectors    []CollectorStatus  `json:"collectors"`
+	SchemaVersion string            `json:"schema_version"`
+	TargetName    string            `json:"target_name,omitempty"`
+	CollectedAt   string            `json:"collected_at"`
+	Collectors    []CollectorStatus `json:"collectors"`
 }
 
 // Sort orders collectors by ID for deterministic output.
@@ -72,5 +76,51 @@ func NewFailedStatus(id, reason, detail string, durationMS int, collectedAt time
 		RowCount:    0,
 		DurationMS:  durationMS,
 		CollectedAt: collectedAt.UTC().Format(time.RFC3339),
+	}
+}
+
+// BuildStatusFromRuns constructs collector status entries from query
+// run records. This is used to reconstruct per-target status from
+// the query_runs table for target-scoped exports.
+func BuildStatusFromRuns(runs []db.QueryRun) []CollectorStatus {
+	var statuses []CollectorStatus
+
+	for _, r := range runs {
+		if r.Error == "" {
+			statuses = append(statuses, CollectorStatus{
+				ID:          r.QueryID,
+				Attempted:   true,
+				Status:      "success",
+				RowCount:    r.RowCount,
+				DurationMS:  r.DurationMS,
+				CollectedAt: r.CollectedAt,
+			})
+		} else {
+			reason := classifyRunError(r.Error)
+			statuses = append(statuses, CollectorStatus{
+				ID:          r.QueryID,
+				Attempted:   true,
+				Status:      "failed",
+				Reason:      reason,
+				Detail:      r.Error,
+				DurationMS:  r.DurationMS,
+				CollectedAt: r.CollectedAt,
+			})
+		}
+	}
+
+	return statuses
+}
+
+// classifyRunError maps an error string to a reason category.
+func classifyRunError(errMsg string) string {
+	lower := strings.ToLower(errMsg)
+	switch {
+	case strings.Contains(lower, "permission denied") || strings.Contains(lower, "42501"):
+		return "permission_denied"
+	case strings.Contains(lower, "deadline exceeded") || strings.Contains(lower, "timeout"):
+		return "timeout"
+	default:
+		return "execution_error"
 	}
 }
