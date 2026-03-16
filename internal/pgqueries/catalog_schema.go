@@ -10,6 +10,7 @@ import "time"
 // Specifications:
 //   specifications/collectors/pg_constraints_v1.md
 //   specifications/collectors/pg_indexes_v1.md
+//   specifications/collectors/pg_stats_v1.md
 
 // SchemaFilter is the standard WHERE clause that excludes PostgreSQL
 // internal schemas from all schema metadata collectors.
@@ -85,6 +86,34 @@ func init() {
 		  AND schemaname NOT LIKE 'pg_temp_%'
 		  AND schemaname NOT LIKE 'pg_toast_temp_%'
 		ORDER BY schemaname, tablename, indexname`,
+		ResultKind:     ResultRowset,
+		RetentionClass: RetentionMedium,
+		Timeout:        30 * time.Second,
+		Cadence:        CadenceDaily,
+	})
+
+	// pg_stats_v1: column-level planner statistics for cardinality
+	// and correlation analysis. Deliberately excludes most_common_vals,
+	// histogram_bounds, and other columns that contain data samples.
+	//
+	// Specification: specifications/collectors/pg_stats_v1.md
+	// Unblocks: FI-R012 (n_distinct cardinality), FI-R052 (correlation)
+	Register(QueryDef{
+		ID:       "pg_stats_v1",
+		Category: "schema",
+		SQL: `SELECT
+			schemaname,
+			tablename,
+			attname,
+			n_distinct,
+			correlation,
+			null_frac,
+			avg_width
+		FROM pg_stats
+		WHERE schemaname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+		  AND schemaname NOT LIKE 'pg_temp_%'
+		  AND schemaname NOT LIKE 'pg_toast_temp_%'
+		ORDER BY schemaname, tablename, attname`,
 		ResultKind:     ResultRowset,
 		RetentionClass: RetentionMedium,
 		Timeout:        30 * time.Second,

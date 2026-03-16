@@ -248,6 +248,171 @@ func TestIndexesCollectorUsesCoalesce(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Schema Metadata Collectors — Phase 1 Step 3: pg_stats_v1
+// ---------------------------------------------------------------------------
+
+// --- pg_stats_v1 registration ---
+
+func TestStatsCollectorRegistered(t *testing.T) {
+	q := pgqueries.ByID("pg_stats_v1")
+	if q == nil {
+		t.Fatal("pg_stats_v1 is not registered")
+	}
+	if q.Category != "schema" {
+		t.Errorf("category: got %q, want %q", q.Category, "schema")
+	}
+}
+
+// --- pg_stats_v1 linter ---
+
+func TestStatsCollectorPassesLinter(t *testing.T) {
+	q := pgqueries.ByID("pg_stats_v1")
+	if q == nil {
+		t.Fatal("pg_stats_v1 not registered")
+	}
+	if err := pgqueries.LintQuery(q.SQL); err != nil {
+		t.Errorf("pg_stats_v1 failed linter: %v", err)
+	}
+}
+
+// --- pg_stats_v1 cadence ---
+
+func TestStatsCollectorCadence(t *testing.T) {
+	q := pgqueries.ByID("pg_stats_v1")
+	if q == nil {
+		t.Fatal("pg_stats_v1 not registered")
+	}
+	if q.Cadence != pgqueries.CadenceDaily {
+		t.Errorf("cadence: got %v, want CadenceDaily (24h)", q.Cadence)
+	}
+}
+
+// --- pg_stats_v1 schema filter ---
+
+func TestStatsCollectorExcludesSystemSchemas(t *testing.T) {
+	q := pgqueries.ByID("pg_stats_v1")
+	if q == nil {
+		t.Fatal("pg_stats_v1 not registered")
+	}
+	sql := strings.ToLower(q.SQL)
+	for _, schema := range []string{"pg_catalog", "information_schema", "pg_toast", "pg_temp_"} {
+		if !strings.Contains(sql, schema) {
+			t.Errorf("pg_stats_v1 must filter out %q", schema)
+		}
+	}
+}
+
+// --- pg_stats_v1 deterministic ordering ---
+
+func TestStatsCollectorHasOrderBy(t *testing.T) {
+	q := pgqueries.ByID("pg_stats_v1")
+	if q == nil {
+		t.Fatal("pg_stats_v1 not registered")
+	}
+	if !containsCI(q.SQL, "ORDER BY") {
+		t.Error("pg_stats_v1 must have ORDER BY for deterministic output")
+	}
+}
+
+// --- pg_stats_v1 explicit column list ---
+
+func TestStatsCollectorNoSelectStar(t *testing.T) {
+	q := pgqueries.ByID("pg_stats_v1")
+	if q == nil {
+		t.Fatal("pg_stats_v1 not registered")
+	}
+	if strings.Contains(q.SQL, "SELECT *") || strings.Contains(q.SQL, "select *") {
+		t.Error("pg_stats_v1 must not use SELECT *")
+	}
+}
+
+// --- pg_stats_v1 required output columns ---
+
+func TestStatsCollectorOutputColumns(t *testing.T) {
+	q := pgqueries.ByID("pg_stats_v1")
+	if q == nil {
+		t.Fatal("pg_stats_v1 not registered")
+	}
+
+	sql := strings.ToLower(q.SQL)
+
+	required := []string{
+		"schemaname", "tablename", "attname",
+		"n_distinct", "correlation", "null_frac", "avg_width",
+	}
+
+	for _, col := range required {
+		if !strings.Contains(sql, col) {
+			t.Errorf("pg_stats_v1 must include column %q", col)
+		}
+	}
+}
+
+// --- pg_stats_v1 excluded columns (data samples) ---
+
+func TestStatsCollectorExcludesDataSamples(t *testing.T) {
+	q := pgqueries.ByID("pg_stats_v1")
+	if q == nil {
+		t.Fatal("pg_stats_v1 not registered")
+	}
+
+	sql := strings.ToLower(q.SQL)
+
+	excluded := []string{
+		"most_common_vals", "most_common_freqs",
+		"histogram_bounds", "most_common_elems",
+		"most_common_elem_freqs", "elem_count_histogram",
+	}
+
+	for _, col := range excluded {
+		if strings.Contains(sql, col) {
+			t.Errorf("pg_stats_v1 must NOT include %q (contains data samples)", col)
+		}
+	}
+}
+
+// --- pg_stats_v1 result kind ---
+
+func TestStatsCollectorResultKind(t *testing.T) {
+	q := pgqueries.ByID("pg_stats_v1")
+	if q == nil {
+		t.Fatal("pg_stats_v1 not registered")
+	}
+	if q.ResultKind != pgqueries.ResultRowset {
+		t.Errorf("ResultKind: got %q, want rowset", q.ResultKind)
+	}
+}
+
+// --- pg_stats_v1 included on PG 14 ---
+
+func TestStatsCollectorIncludedOnPG14(t *testing.T) {
+	filtered := pgqueries.Filter(pgqueries.FilterParams{
+		PGMajorVersion: 14,
+		Extensions:     []string{},
+	})
+	found := false
+	for _, q := range filtered {
+		if q.ID == "pg_stats_v1" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("pg_stats_v1 must be included on PG 14")
+	}
+}
+
+// --- Updated catalog count ---
+
+func TestSchemaCatalogCountWithStats(t *testing.T) {
+	all := pgqueries.All()
+	// 29 existing + 3 schema = 32 minimum
+	if len(all) < 32 {
+		t.Errorf("catalog has %d collectors, want at least 32", len(all))
+	}
+}
+
 // --- Version filtering ---
 
 func TestSchemaPhase1IncludedOnPG14(t *testing.T) {
