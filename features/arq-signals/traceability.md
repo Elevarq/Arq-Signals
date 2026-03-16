@@ -69,3 +69,5 @@
 | R059 | Column planner statistics | TC-SIG-051 | COVERED | BEHAVIORAL | pg_stats_v1: registered, linter pass, 24h cadence, schema filter, no data samples, n_distinct/correlation included |
 | R060 | Column inventory with types | TC-SIG-052 | COVERED | BEHAVIORAL | pg_columns_v1: registered, linter pass, 24h cadence, schema filter, pg_attribute native, format_type, no default text, excludes system/dropped columns |
 | R061 | Schema namespace inventory | TC-SIG-053 | COVERED | BEHAVIORAL | pg_schemas_v1: registered, linter pass, 24h cadence, schema filter, pg_namespace + pg_roles join, nspname/nspowner/is_default |
+| R062 | View inventory | TC-SIG-054 | COVERED | BEHAVIORAL | pg_views_v1: registered, linter pass, 24h cadence, schema filter, inventory mode (no definition), pg_views source |
+| R063 | View definitions | TC-SIG-054 | COVERED | BEHAVIORAL | pg_views_definitions_v1: registered, linter pass, includes pg_get_viewdef definition column, separate from inventory |

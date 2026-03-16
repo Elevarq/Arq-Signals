@@ -180,4 +180,60 @@ func init() {
 		Timeout:        10 * time.Second,
 		Cadence:        CadenceDaily,
 	})
+
+	// pg_views_v1: view inventory (inventory mode — no definition text).
+	// Lists all user-schema views with owner. Definition text is
+	// excluded by default for safety; use pg_views_definitions_v1
+	// when definition/hash_only mode is needed.
+	//
+	// Specification: specifications/collectors/pg_views_v1.md
+	Register(QueryDef{
+		ID:       "pg_views_v1",
+		Category: "schema",
+		SQL: `SELECT
+			schemaname,
+			viewname,
+			viewowner
+		FROM pg_views
+		WHERE schemaname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+		  AND schemaname NOT LIKE 'pg_temp_%'
+		  AND schemaname NOT LIKE 'pg_toast_temp_%'
+		ORDER BY schemaname, viewname`,
+		ResultKind:     ResultRowset,
+		RetentionClass: RetentionMedium,
+		Timeout:        10 * time.Second,
+		Cadence:        CadenceDaily,
+	})
+
+	// pg_views_definitions_v1: view inventory with definition text
+	// (definition mode). Includes all inventory columns plus the
+	// full view SQL from pg_get_viewdef(). Disabled by default in
+	// typical configurations; enabled when schema drift detection
+	// or documentation is needed.
+	//
+	// For hash_only mode, the Arq Signals runtime computes SHA-256
+	// of the definition column application-side before persistence,
+	// then strips the raw text. No pgcrypto dependency.
+	//
+	// Specification: specifications/collectors/pg_views_v1.md
+	Register(QueryDef{
+		ID:       "pg_views_definitions_v1",
+		Category: "schema",
+		SQL: `SELECT
+			v.schemaname,
+			v.viewname,
+			v.viewowner,
+			pg_get_viewdef(c.oid, true) AS definition
+		FROM pg_views v
+		JOIN pg_class c ON c.relname = v.viewname
+		JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = v.schemaname
+		WHERE v.schemaname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+		  AND v.schemaname NOT LIKE 'pg_temp_%'
+		  AND v.schemaname NOT LIKE 'pg_toast_temp_%'
+		ORDER BY v.schemaname, v.viewname`,
+		ResultKind:     ResultRowset,
+		RetentionClass: RetentionMedium,
+		Timeout:        30 * time.Second,
+		Cadence:        CadenceDaily,
+	})
 }
