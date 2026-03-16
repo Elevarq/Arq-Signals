@@ -74,3 +74,5 @@
 | R064 | Materialized view inventory | TC-SIG-055 | COVERED | BEHAVIORAL | pg_matviews_v1: registered, linter pass, 24h cadence, schema filter, inventory mode, ispopulated + hasindexes |
 | R065 | Materialized view definitions | TC-SIG-055 | COVERED | BEHAVIORAL | pg_matviews_definitions_v1: registered, linter pass, includes definition column, separate from inventory |
 | R066 | Partition topology | TC-SIG-056 | COVERED | BEHAVIORAL | pg_partitions_v1: registered, linter pass, 24h cadence, schema filter, pg_partitioned_table + pg_inherits + pg_get_partkeydef, parent/child with bounds |
+| R067 | Trigger inventory | TC-SIG-057 | COVERED | BEHAVIORAL | pg_triggers_v1: registered, linter pass, 24h cadence, schema filter, tgtype bitmask, excludes internal triggers, pg_trigger + pg_proc |
+| R068 | Trigger definitions | TC-SIG-057 | COVERED | BEHAVIORAL | pg_triggers_definitions_v1: registered, linter pass, includes pg_get_triggerdef, separate from inventory |

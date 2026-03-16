@@ -321,4 +321,72 @@ func init() {
 		Timeout:        30 * time.Second,
 		Cadence:        CadenceDaily,
 	})
+
+	// pg_triggers_v1: trigger inventory (inventory mode). Outputs
+	// the tgtype bitmask as an integer — timing and events are
+	// decoded by the analyzer. Excludes internal triggers.
+	//
+	// tgtype bitmask: bit 0=ROW, bit 1=BEFORE, bit 2=INSERT,
+	// bit 3=DELETE, bit 4=UPDATE, bit 5=TRUNCATE, bit 6=INSTEAD OF
+	//
+	// Specification: specifications/collectors/pg_triggers_v1.md
+	Register(QueryDef{
+		ID:       "pg_triggers_v1",
+		Category: "schema",
+		SQL: `SELECT
+			n.nspname AS schemaname,
+			c.relname,
+			t.tgname,
+			t.tgtype::int AS tgtype,
+			fn.nspname AS tg_funcschema,
+			p.proname AS tg_funcname,
+			t.tgenabled AS tg_enabled
+		FROM pg_trigger t
+		JOIN pg_class c ON c.oid = t.tgrelid
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		JOIN pg_proc p ON p.oid = t.tgfoid
+		JOIN pg_namespace fn ON fn.oid = p.pronamespace
+		WHERE NOT t.tgisinternal
+		  AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+		  AND n.nspname NOT LIKE 'pg_temp_%'
+		  AND n.nspname NOT LIKE 'pg_toast_temp_%'
+		ORDER BY n.nspname, c.relname, t.tgname`,
+		ResultKind:     ResultRowset,
+		RetentionClass: RetentionMedium,
+		Timeout:        15 * time.Second,
+		Cadence:        CadenceDaily,
+	})
+
+	// pg_triggers_definitions_v1: trigger inventory with definition
+	// text from pg_get_triggerdef(). Includes all inventory columns
+	// plus the full trigger definition.
+	//
+	// Specification: specifications/collectors/pg_triggers_v1.md
+	Register(QueryDef{
+		ID:       "pg_triggers_definitions_v1",
+		Category: "schema",
+		SQL: `SELECT
+			n.nspname AS schemaname,
+			c.relname,
+			t.tgname,
+			t.tgtype::int AS tgtype,
+			fn.nspname AS tg_funcschema,
+			p.proname AS tg_funcname,
+			t.tgenabled AS tg_enabled,
+			pg_get_triggerdef(t.oid, true) AS triggerdef
+		FROM pg_trigger t
+		JOIN pg_class c ON c.oid = t.tgrelid
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		JOIN pg_proc p ON p.oid = t.tgfoid
+		JOIN pg_namespace fn ON fn.oid = p.pronamespace
+		WHERE NOT t.tgisinternal
+		  AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+		  AND n.nspname NOT LIKE 'pg_temp_%'
+		  AND n.nspname NOT LIKE 'pg_toast_temp_%'
+		ORDER BY n.nspname, c.relname, t.tgname`,
+		ResultKind:     ResultRowset,
+		RetentionClass: RetentionMedium,
+		Timeout:        30 * time.Second,
+		Cadence:        CadenceDaily,
+	})
 }

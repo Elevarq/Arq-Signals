@@ -1193,13 +1193,201 @@ func TestPartitionsCollectorIncludedOnPG14(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Schema Metadata Collectors — Phase 2 Step 9: pg_triggers_v1
+// ---------------------------------------------------------------------------
+
+// --- pg_triggers_v1 inventory mode ---
+
+func TestTriggersCollectorRegistered(t *testing.T) {
+	q := pgqueries.ByID("pg_triggers_v1")
+	if q == nil {
+		t.Fatal("pg_triggers_v1 is not registered")
+	}
+	if q.Category != "schema" {
+		t.Errorf("category: got %q, want %q", q.Category, "schema")
+	}
+}
+
+func TestTriggersCollectorPassesLinter(t *testing.T) {
+	q := pgqueries.ByID("pg_triggers_v1")
+	if q == nil {
+		t.Fatal("pg_triggers_v1 not registered")
+	}
+	if err := pgqueries.LintQuery(q.SQL); err != nil {
+		t.Errorf("pg_triggers_v1 failed linter: %v", err)
+	}
+}
+
+func TestTriggersCollectorCadence(t *testing.T) {
+	q := pgqueries.ByID("pg_triggers_v1")
+	if q == nil {
+		t.Fatal("pg_triggers_v1 not registered")
+	}
+	if q.Cadence != pgqueries.CadenceDaily {
+		t.Errorf("cadence: got %v, want CadenceDaily (24h)", q.Cadence)
+	}
+}
+
+func TestTriggersCollectorExcludesSystemSchemas(t *testing.T) {
+	q := pgqueries.ByID("pg_triggers_v1")
+	if q == nil {
+		t.Fatal("pg_triggers_v1 not registered")
+	}
+	sql := strings.ToLower(q.SQL)
+	for _, schema := range []string{"pg_catalog", "information_schema", "pg_toast", "pg_temp_"} {
+		if !strings.Contains(sql, schema) {
+			t.Errorf("pg_triggers_v1 must filter out %q", schema)
+		}
+	}
+}
+
+func TestTriggersCollectorHasOrderBy(t *testing.T) {
+	q := pgqueries.ByID("pg_triggers_v1")
+	if q == nil {
+		t.Fatal("pg_triggers_v1 not registered")
+	}
+	if !containsCI(q.SQL, "ORDER BY") {
+		t.Error("pg_triggers_v1 must have ORDER BY for deterministic output")
+	}
+}
+
+func TestTriggersCollectorNoSelectStar(t *testing.T) {
+	q := pgqueries.ByID("pg_triggers_v1")
+	if q == nil {
+		t.Fatal("pg_triggers_v1 not registered")
+	}
+	if strings.Contains(q.SQL, "SELECT *") || strings.Contains(q.SQL, "select *") {
+		t.Error("pg_triggers_v1 must not use SELECT *")
+	}
+}
+
+func TestTriggersCollectorInventoryColumns(t *testing.T) {
+	q := pgqueries.ByID("pg_triggers_v1")
+	if q == nil {
+		t.Fatal("pg_triggers_v1 not registered")
+	}
+	sql := strings.ToLower(q.SQL)
+
+	for _, col := range []string{
+		"schemaname", "relname", "tgname", "tgtype",
+		"tg_funcschema", "tg_funcname", "tg_enabled",
+	} {
+		if !strings.Contains(sql, col) {
+			t.Errorf("pg_triggers_v1 must include column %q", col)
+		}
+	}
+}
+
+func TestTriggersCollectorExcludesInternalTriggers(t *testing.T) {
+	q := pgqueries.ByID("pg_triggers_v1")
+	if q == nil {
+		t.Fatal("pg_triggers_v1 not registered")
+	}
+	sql := strings.ToLower(q.SQL)
+	if !strings.Contains(sql, "tgisinternal") {
+		t.Error("pg_triggers_v1 must exclude internal triggers (tgisinternal)")
+	}
+}
+
+func TestTriggersCollectorEmitsTgtype(t *testing.T) {
+	q := pgqueries.ByID("pg_triggers_v1")
+	if q == nil {
+		t.Fatal("pg_triggers_v1 not registered")
+	}
+	sql := strings.ToLower(q.SQL)
+	// Must emit tgtype as integer for analyzer-side decoding
+	if !strings.Contains(sql, "tgtype") {
+		t.Error("pg_triggers_v1 must emit tgtype bitmask")
+	}
+	if strings.Contains(sql, "pg_get_triggerdef") {
+		t.Error("inventory mode must not use pg_get_triggerdef")
+	}
+}
+
+func TestTriggersCollectorUsesPgTrigger(t *testing.T) {
+	q := pgqueries.ByID("pg_triggers_v1")
+	if q == nil {
+		t.Fatal("pg_triggers_v1 not registered")
+	}
+	if !containsCI(q.SQL, "pg_trigger") {
+		t.Error("pg_triggers_v1 must use pg_trigger catalog")
+	}
+}
+
+func TestTriggersCollectorResultKind(t *testing.T) {
+	q := pgqueries.ByID("pg_triggers_v1")
+	if q == nil {
+		t.Fatal("pg_triggers_v1 not registered")
+	}
+	if q.ResultKind != pgqueries.ResultRowset {
+		t.Errorf("ResultKind: got %q, want rowset", q.ResultKind)
+	}
+}
+
+func TestTriggersCollectorIncludedOnPG14(t *testing.T) {
+	filtered := pgqueries.Filter(pgqueries.FilterParams{
+		PGMajorVersion: 14,
+		Extensions:     []string{},
+	})
+	found := false
+	for _, q := range filtered {
+		if q.ID == "pg_triggers_v1" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("pg_triggers_v1 must be included on PG 14")
+	}
+}
+
+// --- pg_triggers_definitions_v1 definition mode ---
+
+func TestTriggersDefinitionsCollectorRegistered(t *testing.T) {
+	q := pgqueries.ByID("pg_triggers_definitions_v1")
+	if q == nil {
+		t.Fatal("pg_triggers_definitions_v1 is not registered")
+	}
+	if q.Category != "schema" {
+		t.Errorf("category: got %q, want %q", q.Category, "schema")
+	}
+}
+
+func TestTriggersDefinitionsCollectorPassesLinter(t *testing.T) {
+	q := pgqueries.ByID("pg_triggers_definitions_v1")
+	if q == nil {
+		t.Fatal("pg_triggers_definitions_v1 not registered")
+	}
+	if err := pgqueries.LintQuery(q.SQL); err != nil {
+		t.Errorf("pg_triggers_definitions_v1 failed linter: %v", err)
+	}
+}
+
+func TestTriggersDefinitionsCollectorIncludesTriggerdef(t *testing.T) {
+	q := pgqueries.ByID("pg_triggers_definitions_v1")
+	if q == nil {
+		t.Fatal("pg_triggers_definitions_v1 not registered")
+	}
+	sql := strings.ToLower(q.SQL)
+
+	for _, col := range []string{"schemaname", "relname", "tgname", "triggerdef"} {
+		if !strings.Contains(sql, col) {
+			t.Errorf("pg_triggers_definitions_v1 must include column %q", col)
+		}
+	}
+	if !strings.Contains(sql, "pg_get_triggerdef") {
+		t.Error("pg_triggers_definitions_v1 must use pg_get_triggerdef()")
+	}
+}
+
 // --- Updated catalog count ---
 
-func TestSchemaPhase2PartitionsCatalogCount(t *testing.T) {
+func TestSchemaPhase2TriggersCatalogCount(t *testing.T) {
 	all := pgqueries.All()
-	// 29 existing + 5 Phase 1/2a + 2 views + 2 matviews + 1 partitions = 39 minimum
-	if len(all) < 39 {
-		t.Errorf("catalog has %d collectors, want at least 39", len(all))
+	// 29 existing + 5 Phase 1/2a + 2 views + 2 matviews + 1 partitions + 2 triggers = 41
+	if len(all) < 41 {
+		t.Errorf("catalog has %d collectors, want at least 41", len(all))
 	}
 }
 
