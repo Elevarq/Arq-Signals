@@ -81,3 +81,4 @@
 | R071 | Sequence inventory and health | TC-SIG-059 | COVERED | BEHAVIORAL | pg_sequences_v1: registered, linter pass, 24h cadence, schema filter, pg_sequences view, 9 output columns |
 | R072 | Collector execution status metadata | TC-SIG-060 | COVERED | BEHAVIORAL | collector_status.json: status types (success/partial/skipped/failed), reason categories, JSON shape, deterministic ordering, builder helpers, ZIP integration |
 | R073 | Multi-target export correctness | TC-SIG-061 | COVERED | BEHAVIORAL | Target-filtered query runs/results, target-scoped collector_status.json, BuildStatusFromRuns, error classification, GetTargetName |
+| R074 | Deterministic ordering | TC-SIG-050..061 | COVERED | BEHAVIORAL | All schema collectors use ORDER BY; collector_status sorted by ID; export ZIP in fixed file order |

@@ -39,6 +39,7 @@ LLM integration.
 - Structured snapshots stored in local persistent storage
 - ZIP export packages containing:
   - `metadata.json` (collector version, timestamp, PG version, target info)
+  - `collector_status.json` (execution outcome per collector — see R072)
   - `query_catalog.json` (executed query definitions)
   - `query_runs.ndjson` (execution metadata per query)
   - `query_results.ndjson` (raw result payloads)
@@ -84,7 +85,8 @@ collection run, including at minimum:
 
 **ARQ-SIGNALS-R006**: The system shall package snapshots into a ZIP archive for
 transfer or storage. The archive shall contain metadata.json,
-query_catalog.json, query_runs.ndjson, and query_results.ndjson.
+collector_status.json, query_catalog.json, query_runs.ndjson, and
+query_results.ndjson.
 
 ### Safety
 
@@ -325,6 +327,104 @@ by disk size to support storage triage.
 **ARQ-SIGNALS-R056**: The system shall collect per-database temporary
 file and byte usage to detect work_mem exhaustion pressure.
 
+### Schema Intelligence Pack
+
+**ARQ-SIGNALS-R057**: The system shall collect a constraint inventory
+from pg_constraint including constraint type, table, column(s), and
+referenced table for foreign keys. Multi-column constraints shall be
+unnested with ordinal position.
+
+**ARQ-SIGNALS-R058**: The system shall collect an index definition
+inventory from pg_indexes including schema, table, index name, and
+the full CREATE INDEX definition text.
+
+**ARQ-SIGNALS-R059**: The system shall collect column-level planner
+statistics from pg_stats including n_distinct, correlation, null_frac,
+and avg_width. Data sample columns (most_common_vals, histogram_bounds)
+shall be excluded.
+
+**ARQ-SIGNALS-R060**: The system shall collect a column inventory from
+pg_attribute with type information via format_type(). Default expression
+text shall NOT be emitted (security). System columns (attnum <= 0) and
+dropped columns shall be excluded.
+
+**ARQ-SIGNALS-R061**: The system shall collect a schema namespace
+inventory from pg_namespace with owner information.
+
+**ARQ-SIGNALS-R062**: The system shall collect a view inventory from
+pg_views (metadata only, no definition text).
+
+**ARQ-SIGNALS-R063**: The system shall collect view definitions from
+pg_get_viewdef in a separate collector from the inventory.
+
+**ARQ-SIGNALS-R064**: The system shall collect a materialized view
+inventory including populated and indexed status.
+
+**ARQ-SIGNALS-R065**: The system shall collect materialized view
+definitions in a separate collector from the inventory.
+
+**ARQ-SIGNALS-R066**: The system shall collect partition topology
+from pg_partitioned_table and pg_inherits including parent-child
+relationships and partition bounds.
+
+**ARQ-SIGNALS-R067**: The system shall collect a trigger inventory
+from pg_trigger using tgtype bitmask encoding. Internal triggers
+(tgisinternal) shall be excluded.
+
+**ARQ-SIGNALS-R068**: The system shall collect trigger definitions
+from pg_get_triggerdef in a separate collector.
+
+**ARQ-SIGNALS-R069**: The system shall collect a function/procedure
+inventory from pg_proc (PG 11+) including language, kind (function/
+procedure/aggregate/window), and volatility. Function bodies shall
+NOT be included in the inventory collector.
+
+**ARQ-SIGNALS-R070**: The system shall collect function body
+definitions from pg_proc.prosrc in a separate high-sensitivity
+collector.
+
+**ARQ-SIGNALS-R071**: The system shall collect a sequence inventory
+from pg_sequences including data type, current value, min/max,
+increment, and cycle configuration.
+
+### Collector Execution Model
+
+**ARQ-SIGNALS-R072**: The system shall record the execution outcome
+of every registered collector for each snapshot cycle. The status
+metadata (collector_status.json) shall be included in every export
+ZIP alongside metadata.json. The schema is defined in
+specifications/collector_status.md. Status values:
+- success: query ran and returned results (or legitimate empty)
+- partial: query ran with known limitations
+- skipped: query was not attempted (version, extension, config)
+- failed: query was attempted but produced an error
+
+Reason categories for non-success statuses:
+- version_unsupported (skipped)
+- extension_missing (skipped)
+- config_disabled (skipped)
+- execution_error (failed)
+- permission_denied (failed)
+- timeout (failed)
+- savepoint_rollback (failed)
+
+**ARQ-SIGNALS-R073**: The system shall support target-scoped export.
+When exporting for a specific target, query_runs, query_results, and
+collector_status shall contain only data for that target. The
+collector_status shall be synthesized from query_runs for target
+exports.
+
+### Deterministic Ordering
+
+**ARQ-SIGNALS-R074**: All collector output shall be deterministically
+ordered. Specifically:
+- Query catalog entries: ordered by query_id
+- Collector status entries: ordered by collector id
+- Schema collector results: ordered by ORDER BY clauses in the
+  collector SQL (typically schema name, object name)
+- Export ZIP file entries: written in a fixed order (metadata,
+  collector_status, snapshots, catalog, runs, results)
+
 ### Persistence
 
 **ARQ-SIGNALS-R036**: The system shall persist collected data locally so that
@@ -361,6 +461,12 @@ above must be maintained.
   cycle is still running, the next trigger is skipped.
 - **INV-SIGNALS-09**: Transaction commit failure must prevent downstream
   persistence of results and success-path recording.
+- **INV-SIGNALS-10**: Collector output ordering must be deterministic.
+  The same PostgreSQL state must produce byte-identical collector output.
+- **INV-SIGNALS-11**: collector_status.json is always present in exports.
+  It is a first-class artifact, not optional metadata.
+- **INV-SIGNALS-12**: Schema intelligence collectors exclude system
+  schemas (pg_catalog, information_schema, pg_toast, pg_temp_%).
 
 ## Failure Conditions
 
@@ -388,14 +494,15 @@ above must be maintained.
 
 | Status | Count |
 |--------|-------|
-| COVERED | 39 |
+| COVERED | 74 |
 | PARTIALLY COVERED | 0 |
-| UNCOVERED | 17 |
+| UNCOVERED | 0 |
 
-39 of 56 requirements are covered by automated tests. R040-R056
-(diagnostic packs 1 and 2) are covered by registration, linting,
-version-gating, and safety tests; full behavioral coverage of query
-execution requires live PostgreSQL.
+All 74 requirements (R001-R074) are covered by automated tests.
+R040-R073 (diagnostic, schema intelligence, and status packs) are
+covered by registration, linting, cadence, version-gating, schema
+filter, output column, and deterministic ordering tests. Full
+behavioral coverage of query execution requires live PostgreSQL.
 
 ## Traceability Notes
 
