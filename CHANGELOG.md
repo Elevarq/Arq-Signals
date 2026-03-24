@@ -4,6 +4,25 @@ All notable changes to Arq Signals will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.1] - 2026-03-23
+
+### Security
+
+- Upgrade Go from 1.24 to 1.25 (resolves CVE-2026-25679 HIGH,
+  CVE-2026-27142, CVE-2026-27139)
+- Upgrade runtime base image from Alpine 3.20 to 3.21
+- Add container securityContext: readOnlyRootFilesystem, drop ALL
+  capabilities, disallow privilege escalation
+- Add pod-level seccompProfile (RuntimeDefault) and runAsGroup
+- Add Dockerfile HEALTHCHECK instruction
+
+### Changed
+
+- Helm chart version: 0.2.0 → 0.2.1
+- Trivy config findings: 1 HIGH + 3 MEDIUM + 6 LOW → 0 HIGH + 1 MEDIUM (false positive) + 1 LOW (false positive)
+
+---
+
 ## [0.2.0] - 2026-03-14
 
 ### Added
