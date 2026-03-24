@@ -1,5 +1,5 @@
 # Stage 1: Build
-FROM golang:1.24-alpine AS builder
+FROM golang:1.25-alpine AS builder
 
 RUN apk add --no-cache git
 
@@ -27,7 +27,7 @@ RUN CGO_ENABLED=0 go build \
     -o /out/arqctl ./cmd/arqctl
 
 # Stage 2: Runtime
-FROM alpine:3.20
+FROM alpine:3.21
 
 RUN apk add --no-cache tini ca-certificates \
     && adduser -D -u 10001 arq
@@ -40,6 +40,9 @@ VOLUME /data
 
 USER arq
 EXPOSE 8081
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+  CMD wget -qO /dev/null http://localhost:8081/health || exit 1
 
 ENTRYPOINT ["tini", "--"]
 CMD ["arq-signals"]
