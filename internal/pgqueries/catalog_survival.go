@@ -130,19 +130,32 @@ func init() {
 		Cadence:        Cadence5m,
 	})
 
-	// Database sizes: all non-template databases with sizes for
-	// growth monitoring and disk-risk triage.
+	// Database sizes: all non-template databases with sizes, wraparound
+	// context, and catalog identity. Extended from the original
+	// size+connection+xid view to supersede a separate pg_database_v1
+	// collector. The original column aliases (database_name,
+	// connection_limit, xid_age) are retained so existing consumers keep
+	// working; new columns are additive.
 	Register(QueryDef{
 		ID:       "database_sizes_v1",
 		Category: "server",
 		SQL: `SELECT
-			datname                                     AS database_name,
-			pg_database_size(datname)                   AS size_bytes,
-			datconnlimit                                AS connection_limit,
-			age(datfrozenxid)                           AS xid_age
-		FROM pg_database
-		WHERE datistemplate = false
-		ORDER BY pg_database_size(datname) DESC`,
+			d.oid                                       AS datid,
+			d.datname                                   AS database_name,
+			d.datdba                                    AS datdba_oid,
+			pg_encoding_to_char(d.encoding)             AS encoding_name,
+			d.datcollate,
+			d.datctype,
+			d.datallowconn,
+			ts.spcname                                  AS tablespace_name,
+			d.datconnlimit                              AS connection_limit,
+			age(d.datfrozenxid)                         AS xid_age,
+			mxid_age(d.datminmxid)                      AS dat_minmxid_age,
+			pg_database_size(d.datname)                 AS size_bytes
+		FROM pg_database d
+		LEFT JOIN pg_tablespace ts ON ts.oid = d.dattablespace
+		WHERE d.datistemplate = false
+		ORDER BY pg_database_size(d.datname) DESC`,
 		ResultKind:     ResultRowset,
 		RetentionClass: RetentionMedium,
 		Timeout:        10 * time.Second,
@@ -189,5 +202,31 @@ func init() {
 		RetentionClass: RetentionMedium,
 		Timeout:        5 * time.Second,
 		Cadence:        Cadence15m,
+	})
+
+	// pg_prepared_xacts_v1: prepared (two-phase-commit) transactions with
+	// server-computed age. Orphaned 2PC holds back xmin and prevents
+	// vacuum from advancing — a subtle but severe pathology that does not
+	// surface in normal session monitoring.
+	//
+	// Specification: specifications/collectors/pg_prepared_xacts_v1.md
+	Register(QueryDef{
+		ID:           "pg_prepared_xacts_v1",
+		Category:     "wraparound",
+		MinPGVersion: 10,
+		SQL: `SELECT
+			transaction,
+			gid,
+			prepared,
+			owner,
+			database,
+			EXTRACT(EPOCH FROM (now() - prepared))::bigint AS age_seconds,
+			age(transaction)::bigint                       AS age_xids
+		FROM pg_prepared_xacts
+		ORDER BY prepared ASC, gid ASC`,
+		ResultKind:     ResultRowset,
+		RetentionClass: RetentionMedium,
+		Timeout:        5 * time.Second,
+		Cadence:        Cadence1h,
 	})
 }
