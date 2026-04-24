@@ -154,7 +154,9 @@ func Load(path string) (Config, error) {
 		}
 	}
 
-	applyEnvOverrides(&cfg)
+	if err := applyEnvOverrides(&cfg); err != nil {
+		return cfg, err
+	}
 
 	if err := parseDurations(&cfg); err != nil {
 		return cfg, err
@@ -163,7 +165,7 @@ func Load(path string) (Config, error) {
 	return cfg, nil
 }
 
-func applyEnvOverrides(cfg *Config) {
+func applyEnvOverrides(cfg *Config) error {
 	if v := os.Getenv("ARQ_ENV"); v != "" {
 		cfg.Env = strings.ToLower(v)
 	}
@@ -210,6 +212,18 @@ func applyEnvOverrides(cfg *Config) {
 	if v := os.Getenv("ARQ_SIGNALS_API_TOKEN"); v != "" {
 		cfg.API.APIToken = v
 	}
+	// File takes precedence over the raw env var when both are set —
+	// matches the _FILE convention used by the official postgres image.
+	// A missing or unreadable file is a hard error so a deployment
+	// mistake does not silently fall through to the weaker env-based
+	// value.
+	if v := os.Getenv("ARQ_SIGNALS_API_TOKEN_FILE"); v != "" {
+		data, err := os.ReadFile(v)
+		if err != nil {
+			return fmt.Errorf("read ARQ_SIGNALS_API_TOKEN_FILE %s: %w", v, err)
+		}
+		cfg.API.APIToken = strings.TrimRight(string(data), "\n\r")
+	}
 
 	// Allow a single target via env (common for containers).
 	if host := os.Getenv("ARQ_SIGNALS_TARGET_HOST"); host != "" {
@@ -228,19 +242,21 @@ func applyEnvOverrides(cfg *Config) {
 			dbname = "postgres"
 		}
 		tgt := TargetConfig{
-			Name:         name,
-			Host:         host,
-			Port:         port,
-			DBName:       dbname,
-			User:         os.Getenv("ARQ_SIGNALS_TARGET_USER"),
-			SSLMode:      os.Getenv("ARQ_SIGNALS_TARGET_SSLMODE"),
-			PasswordFile: os.Getenv("ARQ_SIGNALS_TARGET_PASSWORD_FILE"),
-			PasswordEnv:  os.Getenv("ARQ_SIGNALS_TARGET_PASSWORD_ENV"),
-			PgpassFile:   os.Getenv("ARQ_SIGNALS_TARGET_PGPASS_FILE"),
-			Enabled:      true,
+			Name:            name,
+			Host:            host,
+			Port:            port,
+			DBName:          dbname,
+			User:            os.Getenv("ARQ_SIGNALS_TARGET_USER"),
+			SSLMode:         os.Getenv("ARQ_SIGNALS_TARGET_SSLMODE"),
+			SSLRootCertFile: os.Getenv("ARQ_SIGNALS_TARGET_SSLROOTCERT_FILE"),
+			PasswordFile:    os.Getenv("ARQ_SIGNALS_TARGET_PASSWORD_FILE"),
+			PasswordEnv:     os.Getenv("ARQ_SIGNALS_TARGET_PASSWORD_ENV"),
+			PgpassFile:      os.Getenv("ARQ_SIGNALS_TARGET_PGPASS_FILE"),
+			Enabled:         true,
 		}
 		cfg.Targets = append(cfg.Targets, tgt)
 	}
+	return nil
 }
 
 // Validate checks the Config for common issues, returning human-readable

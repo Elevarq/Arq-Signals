@@ -68,7 +68,7 @@ func init() {
 			                                                                                     AS oldest_xact_age_seconds,
 			EXTRACT(EPOCH FROM (now() - MIN(query_start) FILTER (WHERE state = 'active')))::bigint
 			                                                                                     AS oldest_query_age_seconds,
-			age(MIN(backend_xmin) FILTER (WHERE backend_xmin IS NOT NULL))::bigint
+			MAX(age(backend_xmin)) FILTER (WHERE backend_xmin IS NOT NULL)::bigint
 			                                                                                     AS oldest_backend_xmin_age_xids,
 			count(*) FILTER (WHERE state = 'active' AND now() - query_start > interval '1 minute')::int
 			                                                                                     AS active_gt_1min,
