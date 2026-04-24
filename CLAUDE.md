@@ -104,3 +104,48 @@ stdd/templates/
   feature-spec-template.md  # Template for new feature specs
   test-spec-template.md     # Template for derived test cases
 ```
+
+## Working copy location
+
+The **canonical working copy** of arq-signals is this repository,
+checked out at a stable sibling location alongside the other Elevarq
+product repos — convention:
+`<projects>/arq-signals/` alongside `<projects>/arq/`,
+`<projects>/agent/`, `<projects>/pgagroal-container/`.
+
+A copy of this source may also appear at
+`<arq-repo>/.cache/repo-split/arq-signals/`. That location is a
+**disposable build-input reflection** governed by the arq analyzer's
+`workspace-policy.md` spec (WS-R001..WS-R016, Status: ACTIVE). It
+may be a symlink to the canonical checkout (preferred — WS-R015),
+a secondary clone (WS-R016), or absent — the analyzer's setup
+tooling can re-create it at any time.
+
+It is not the source of truth:
+
+- **Never edit, test, or commit inside the cache path.** Any commit
+  that lives only in the cache is at risk of deletion by a
+  legitimate `rm -rf .cache/` (WS-R013 of the analyzer's workspace
+  policy).
+- If you notice yourself about to commit inside `.cache/`, stop and
+  move the work to the canonical sibling checkout first.
+
+Before any arq-signals action (edit / test / commit / push),
+verify the canonical checkout is present:
+
+```bash
+test -d <projects>/arq-signals/.git \
+  && echo "canonical sibling present — safe to work" \
+  || echo "STOP: clone the canonical sibling first"
+```
+
+If the canonical sibling is missing:
+
+```bash
+cd <projects>
+git clone git@github.com:elevarq/arq-signals.git
+
+# Optionally point the analyzer's cache at the canonical checkout:
+mkdir -p arq/.cache/repo-split
+ln -s $(pwd)/arq-signals arq/.cache/repo-split/arq-signals
+```
