@@ -241,6 +241,22 @@ func (c *Collector) LastCollected() string {
 func (c *Collector) runCycle(ctx context.Context, forceAll bool, req CollectRequest) {
 	if !c.running.TryLock() {
 		slog.Warn("collection cycle skipped — previous cycle still running")
+		// R082 audit-consistency: an on-demand request whose cycle
+		// never runs because of overlap must produce a terminal
+		// dropped event so the request_id has exactly one outcome
+		// in the audit trail. Interval-driven cycles (req.RequestID
+		// empty) skip silently — the previous cycle's events are
+		// already in the audit log.
+		if req.RequestID != "" {
+			droppedAttrs := []any{
+				"request_id", req.RequestID,
+				"reason_category", "cycle_overlap_skipped",
+			}
+			if req.Actor != "" {
+				droppedAttrs = append(droppedAttrs, "actor", req.Actor)
+			}
+			safety.AuditLog("collect_now_dropped", droppedAttrs...)
+		}
 		return
 	}
 	defer c.running.Unlock()

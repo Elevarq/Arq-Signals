@@ -201,6 +201,12 @@ func run() error {
 				slog.Warn("arq_control_plane_token resolve failed", "err", err)
 				return ""
 			}
+			if tok == "" {
+				// Empty file post-rotation: log so an operator can
+				// tell their rotation broke instead of silently
+				// turning into 401s for the control plane.
+				slog.Warn("arq_control_plane_token resolved to empty value — Mode B authentication is degraded until the source is restored")
+			}
 			return tok
 		}
 	}
