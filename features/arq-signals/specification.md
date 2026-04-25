@@ -425,6 +425,32 @@ ordered. Specifically:
 - Export ZIP file entries: written in a fixed order (metadata,
   collector_status, snapshots, catalog, runs, results)
 
+### Collector Sensitivity
+
+**ARQ-SIGNALS-R075**: The system shall classify collectors that emit
+application-authored SQL text — `pg_views_definitions_v1`,
+`pg_matviews_definitions_v1`, `pg_triggers_definitions_v1`,
+`pg_functions_definitions_v1` — as **high-sensitivity** and disable
+them by default. They run only when the operator opts in via
+`signals.high_sensitivity_collectors_enabled: true` (or the
+`ARQ_SIGNALS_HIGH_SENSITIVITY_COLLECTORS_ENABLED=true` environment
+variable). When disabled, each shall appear in
+`collector_status.json` with `status=skipped` and
+`reason=config_disabled`. This control exists for local operator
+control over data sensitivity; it is not an exfiltration boundary
+(Arq Signals runs inside the operator's own environment).
+
+### Configuration Validation
+
+**ARQ-SIGNALS-R076**: The system shall perform strict configuration
+validation at startup, before any collection begins. Validation
+distinguishes hard errors (abort with actionable message) from
+warnings (log and continue). The full taxonomy is defined in
+`appendix-b-configuration-schema.md` ("Validation rules"). In
+particular: malformed `ARQ_SIGNALS_*` environment variable values
+(e.g., non-integer for an integer field) are hard errors, not
+silently dropped.
+
 ### Persistence
 
 **ARQ-SIGNALS-R036**: The system shall persist collected data locally so that
@@ -433,6 +459,12 @@ it survives process restarts. The persistence layer shall support:
 - Retention-based cleanup (data older than configured days is deleted)
 - Schema migration (storage schema is versioned and auto-migrated on startup)
 - An instance identifier (generated on first run, stable across restarts)
+
+**ARQ-SIGNALS-R077**: A collection cycle's query runs, query results,
+and the legacy snapshot row shall be persisted atomically within a
+single local-storage transaction. Partial persistence (e.g., legacy
+snapshot present without query runs, or vice versa) shall not be
+observable to readers or in exports.
 
 The specific storage engine is an implementation choice, but the guarantees
 above must be maintained.
@@ -496,9 +528,12 @@ above must be maintained.
 |--------|-------|
 | COVERED | 74 |
 | PARTIALLY COVERED | 0 |
-| UNCOVERED | 0 |
+| UNCOVERED | 3 |
 
-All 74 requirements (R001-R074) are covered by automated tests.
+74 requirements (R001-R074) are covered by automated tests. R075-R077
+were added in the 2026-04 review cycle and are tracked in
+`traceability.md`; their tests land alongside the implementation
+commits.
 R040-R073 (diagnostic, schema intelligence, and status packs) are
 covered by registration, linting, cadence, version-gating, schema
 filter, output column, and deterministic ordering tests. Full

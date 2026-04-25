@@ -30,6 +30,11 @@ signals:
   max_concurrent_targets: 4  # Max targets collected in parallel
   target_timeout: 60s        # Per-target collection time budget
   query_timeout: 10s         # Per-query execution timeout
+  high_sensitivity_collectors_enabled: false  # Opt-in for collectors
+                              # that emit application-authored SQL text
+                              # (view/matview/trigger definitions and
+                              # function bodies). See "High-sensitivity
+                              # collectors" below. Default: false.
 
 # PostgreSQL targets (one or more)
 targets:
@@ -76,6 +81,7 @@ fields:
 | `ARQ_SIGNALS_MAX_CONCURRENT_TARGETS` | `signals.max_concurrent_targets` | `4` | |
 | `ARQ_SIGNALS_TARGET_TIMEOUT` | `signals.target_timeout` | `60s` | |
 | `ARQ_SIGNALS_QUERY_TIMEOUT` | `signals.query_timeout` | `10s` | |
+| `ARQ_SIGNALS_HIGH_SENSITIVITY_COLLECTORS_ENABLED` | `signals.high_sensitivity_collectors_enabled` | `false` | Opt-in for definition/body collectors |
 | `ARQ_SIGNALS_LISTEN_ADDR` | `api.listen_addr` | `127.0.0.1:8081` | |
 | `ARQ_SIGNALS_WRITE_TIMEOUT` | `api.write_timeout` | `180s` | |
 | `ARQ_SIGNALS_DB_PATH` | `database.path` | `/data/arq-signals.db` | |
@@ -116,6 +122,42 @@ error.
 Credentials are read fresh on every new connection to support password
 rotation without restart.
 
+## High-sensitivity collectors
+
+A subset of collectors emit application-authored SQL text — view
+definitions, materialized view definitions, trigger source, and
+stored procedure bodies. These can include proprietary business
+logic, embedded literals, or commentary the operator may not want
+in every snapshot, even when the snapshot stays inside the operator's
+own environment.
+
+These collectors are **disabled by default** and require explicit
+opt-in via:
+
+- `signals.high_sensitivity_collectors_enabled: true` in the YAML
+  config, or
+- `ARQ_SIGNALS_HIGH_SENSITIVITY_COLLECTORS_ENABLED=true` env var
+
+Collectors classified as high-sensitivity:
+
+| Collector | Emits |
+|---|---|
+| `pg_views_definitions_v1` | Full view SQL via `pg_get_viewdef()` |
+| `pg_matviews_definitions_v1` | Full materialized-view SQL |
+| `pg_triggers_definitions_v1` | Full `CREATE TRIGGER` via `pg_get_triggerdef()` |
+| `pg_functions_definitions_v1` | Function/procedure body (`pg_proc.prosrc`) |
+
+When the opt-in flag is `false` (the default), each high-sensitivity
+collector appears in `collector_status.json` with `status=skipped`
+and `reason=config_disabled`.
+
+This control is for **local operator control over data sensitivity**,
+not exfiltration prevention — Arq Signals runs inside the customer's
+environment and the snapshot file does not leave the site. The
+default-off posture exists because some operators do not want SQL
+bodies materialized into the snapshot artifact at all, even for
+internal analysis.
+
 ## TLS validation
 
 | Environment | Behavior |
@@ -125,9 +167,38 @@ rotation without restart.
 
 ## Validation rules
 
-At startup, the system shall validate configuration and:
-- **Abort** on: unparseable duration strings, missing required fields,
-  multiple credential sources per target, weak TLS in prod
-- **Warn** (non-blocking) on: very short poll interval (<10s), zero
-  retention days, empty listen address, weak sslmode in non-prod,
-  missing target fields (name, host, user, dbname)
+At startup, the system shall validate the loaded configuration before
+starting any collection. Validation produces two outcomes:
+
+### Hard errors (abort startup)
+
+- Unparseable duration strings (`poll_interval`, `target_timeout`,
+  `query_timeout`, `read_timeout`, `write_timeout`).
+- Missing required target fields: `name`, `host`, `dbname`, `user`.
+- Multiple credential sources specified for the same target
+  (`password_file`, `password_env`, `pgpass_file` are mutually
+  exclusive).
+- Duplicate target `name` across the targets list.
+- Non-positive `poll_interval`, `target_timeout`, `query_timeout`,
+  or `retention_days` < 0.
+- Empty `database.path`.
+- Empty `api.listen_addr`.
+- Invalid integer or boolean value in any `ARQ_SIGNALS_*` environment
+  variable. Silent parse failures are no longer accepted; a malformed
+  override is treated as operator intent that the system cannot honor.
+- In `prod` env: weak `sslmode` (`disable`, `allow`, `prefer`,
+  `require`) on any enabled target; missing `sslrootcert_file` when
+  `sslmode` is `verify-ca` / `verify-full`; `ARQ_ALLOW_INSECURE_PG_TLS`
+  set to true.
+
+### Warnings (log, continue startup)
+
+- `sslmode=prefer` on a target outside `prod` (recommend `verify-ca`
+  or `verify-full`).
+- `poll_interval` < 30 seconds (very frequent collection).
+- `retention_days` = 0 (snapshots deleted immediately on next cycle).
+- No targets configured (collector starts but does nothing).
+
+The daemon logs warnings and proceeds. Hard errors abort with a
+clear actionable message naming the offending config field or env
+variable.
