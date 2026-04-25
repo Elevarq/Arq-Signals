@@ -398,11 +398,194 @@ visible in [`internal/pgqueries/`](internal/pgqueries/).
 |--------|------|------|-------------|
 | `GET` | `/health` | No | Liveness probe, always 200 |
 | `GET` | `/status` | Bearer | Collector status, targets, last collection |
-| `POST` | `/collect/now` | Bearer | Trigger immediate collection |
+| `POST` | `/collect/now` | Bearer | Trigger immediate collection (optional JSON body to narrow targets) |
 | `GET` | `/export` | Bearer | Download snapshot ZIP |
 
 Set `ARQ_SIGNALS_API_TOKEN` to configure the bearer token. If unset, a
-random token is generated at startup and logged.
+random token is generated at startup and logged (fingerprint only;
+the value is never logged).
+
+### `POST /collect/now` examples
+
+The body is optional. An empty / missing body keeps the historical
+"collect every enabled target" behaviour. When present, the body
+may carry an optional `targets` subset, an optional `request_id`
+correlation identifier, and an optional `reason` label.
+
+```bash
+# 1. No body — collect every enabled target.
+curl -s -X POST http://127.0.0.1:8081/collect/now \
+  -H "Authorization: Bearer ${ARQ_SIGNALS_API_TOKEN}"
+
+# 2. Narrow to a subset of configured targets.
+curl -s -X POST http://127.0.0.1:8081/collect/now \
+  -H "Authorization: Bearer ${ARQ_SIGNALS_API_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{"targets":["prod-main"]}'
+
+# 3. Caller-supplied correlation id and reason.
+curl -s -X POST http://127.0.0.1:8081/collect/now \
+  -H "Authorization: Bearer ${ARQ_SIGNALS_API_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "targets":    ["prod-main", "prod-reporting"],
+        "request_id": "scheduled_run_2026_04_25",
+        "reason":     "automated_cycle"
+      }'
+```
+
+A successful response (HTTP 202):
+
+```json
+{
+  "status": "collection triggered",
+  "request_id": "scheduled_run_2026_04_25",
+  "accepted_targets": ["prod-main", "prod-reporting"]
+}
+```
+
+A rejection (HTTP 400) — invalid target name:
+
+```json
+{
+  "error": "one or more targets cannot be collected",
+  "accepted_targets": ["prod-main"],
+  "rejected_targets": [
+    {"name": "does-not-exist", "reason": "unknown_target"}
+  ]
+}
+```
+
+The cycle is **not triggered** when any target was rejected.
+
+For the full request schema, validation rules, and audit-trace
+behaviour, see [`docs/control-plane.md`](docs/control-plane.md).
+
+## Control plane support
+
+`POST /collect/now` accepts an optional JSON body that lets a caller
+narrow the cycle to a configured + enabled subset of targets. The
+configured target list in `signals.yaml` is the **authoritative
+ceiling** — no caller can introduce a database name that wasn't
+already configured.
+
+Two optional correlation fields ride along with the request:
+
+- `request_id` (regex `^[A-Za-z0-9_-]{1,32}$`) — caller-supplied
+  correlation identifier. When absent, Arq Signals generates a ULID.
+- `reason` (regex `^[A-Za-z0-9_-]{1,64}$`) — short tag-style label
+  surfaced in audit events.
+
+Every accepted request produces a deterministic audit trace keyed
+by `request_id`:
+
+```
+collect_now_requested  →  collection_started  →  collection_completed   (per target)
+```
+
+Validation failures emit `collect_now_rejected`; requests that
+queue but can't run (channel full, or cycle overlap) emit
+`collect_now_dropped`. See "Audit guarantees" below.
+
+Operators who want the commercial Arq control plane to drive this
+endpoint additionally enable Mode B authentication — see the next
+section. The endpoint itself works in both modes.
+
+Reference: [`docs/control-plane.md`](docs/control-plane.md).
+
+## Authentication modes
+
+Arq Signals supports two modes, configured by `signals.mode` in
+`signals.yaml` (default `standalone`).
+
+### Standalone mode (default)
+
+A single bearer token (`api.token`) authorises every request.
+Matched-token audit events carry `actor=local_operator`. This is
+the only mode every open-source deployment needs to know about.
+
+### Managed mode (`mode: arq_managed`)
+
+Adds a second bearer token, the **Arq control-plane token**,
+distinct from `api.token`. The matched token determines the audit
+identity:
+
+| Bearer matched | `actor` |
+|---|---|
+| `api.token` | `local_operator` |
+| `arq_control_plane_token` | `arq_control_plane` |
+
+The actor is sourced from *which token matched* — it is **never**
+inferred from request shape. A caller holding only `api.token`
+cannot acquire the `arq_control_plane` identity by adding a
+`request_id` or any other body field.
+
+The control-plane token is supplied via file (preferred) or
+environment-variable indirection:
+
+```yaml
+signals:
+  mode: arq_managed
+  arq_control_plane_token_file: /etc/arq/control-plane.token
+  # or:
+  # arq_control_plane_token_env: ARQ_CONTROL_PLANE_TOKEN
+```
+
+The file is re-read on every authentication attempt so rotation is
+a single file-write — no daemon restart required. Token length
+floor is 32 characters; the two tokens must be distinct (constant-
+time check at startup).
+
+Mode B has **no licence-validation surface in Arq Signals.** The
+collector remains open source; the commercial value lives in the
+Arq control plane's analysis layer, not in obscured collector
+behaviour. See `docs/authentication.md` for the full Mode B model,
+rotation behaviour, and security posture.
+
+Reference: [`docs/authentication.md`](docs/authentication.md).
+
+## Audit guarantees
+
+Arq Signals emits structured slog records keyed
+`audit_event=<name>` for every operationally significant lifecycle
+moment. The contract:
+
+**No silent request loss.** Every accepted `/collect/now` request
+reaches a terminal outcome for its `request_id` along exactly one
+of three branches:
+
+| Branch | Terminal records | When |
+|---|---|---|
+| **rejected** | one `collect_now_rejected` | validation failed; cycle never queued |
+| **dropped** | one `collect_now_dropped` | queued but cycle never ran (channel full, or cycle overlap) |
+| **ran** | one `collection_started` **per target** + one `collection_completed` **per target** | cycle ran |
+
+The "ran" branch is per-target: a request that narrows to two
+targets emits two started/completed pairs sharing the same
+`request_id`; a request that omits `targets` emits one pair per
+enabled target. There is no aggregate "cycle complete" record. If
+a `request_id` appears on `collect_now_requested` but the audit
+log shows no records on any of the three branches, that's a bug.
+
+**Token values never logged.** A centralised denylist filter in
+`internal/safety/audit.go` rejects audit attributes whose key
+contains `password`, `secret`, `api_token`, `token`, `dsn`,
+`connection_string`, `payload`, or `query_result`. A small
+hand-curated allow-list overrides the substring match for keys
+that carry only metadata about a configured value (booleans /
+fingerprints), never the secret value itself — as of today the
+allow-list has exactly one entry, the boolean
+`arq_control_plane_token_configured` on the `mode_configured`
+startup event.
+
+**Correlation by request_id.** When a caller supplies (or the
+daemon generates) a `request_id`, that value is propagated through
+to every per-target `collection_started` / `collection_completed`
+audit record so the full sequence is greppable as one trail.
+
+For the full event catalogue, attribute schemas, and the
+secret-handling proof points, see
+[`docs/audit-model.md`](docs/audit-model.md).
 
 ## Security and data handling
 
@@ -439,6 +622,27 @@ details.
 - Passwords are never written to SQLite
 - Passwords never appear in snapshots or exports
 - Password rotation is supported (re-read on each new connection)
+
+### API tokens
+
+- Both bearer tokens (the local `api.token` and the optional
+  Mode B `arq_control_plane_token`) are compared in constant time
+  via `crypto/subtle`.
+- Token values **never appear** in audit logs, metrics, error
+  messages, or HTTP responses. The auto-generated `api.token` logs
+  only its SHA-256 fingerprint at startup.
+- Audit-attribute filtering is centralised: a denylist on attribute
+  key names (`password`, `secret`, `api_token`, `token`, `dsn`,
+  `connection_string`, `payload`, `query_result`) drops any record
+  whose key contains a denylisted substring before it leaves the
+  process. A small hand-curated allow-list permits a single
+  configuration-status boolean
+  (`arq_control_plane_token_configured`) on the `mode_configured`
+  startup event — never a token value.
+- The control-plane token (when configured) is re-read from file
+  on every authentication attempt. Rotation is a single file-write;
+  no daemon restart is required. See
+  [`docs/authentication.md`](docs/authentication.md).
 
 ### Network
 
