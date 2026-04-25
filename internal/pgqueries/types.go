@@ -77,10 +77,15 @@ type QueryDef struct {
 	RetentionClass    RetentionClass
 	Timeout           time.Duration
 	Cadence           Cadence
+	// HighSensitivity flags collectors that emit application-authored SQL
+	// text (view/matview/trigger/function definitions). Per R075 these
+	// run only when the operator opts in.
+	HighSensitivity bool
 }
 
 // FilterParams controls which queries are eligible for a given target.
 type FilterParams struct {
-	PGMajorVersion int
-	Extensions     []string
+	PGMajorVersion         int
+	Extensions             []string
+	HighSensitivityEnabled bool
 }

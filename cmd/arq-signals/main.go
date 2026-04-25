@@ -94,6 +94,7 @@ func run() error {
 		collector.WithTargetTimeout(cfg.Signals.TargetTimeout),
 		collector.WithQueryTimeout(cfg.Signals.QueryTimeout),
 		collector.WithAllowUnsafeRole(cfg.AllowUnsafeRole),
+		collector.WithHighSensitivityCollectors(cfg.Signals.HighSensitivityCollectorsEnabled),
 	)
 
 	if cfg.AllowUnsafeRole {

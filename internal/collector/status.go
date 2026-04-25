@@ -82,27 +82,54 @@ func NewFailedStatus(id, reason, detail string, durationMS int, collectedAt time
 // BuildStatusFromRuns constructs collector status entries from query
 // run records. This is used to reconstruct per-target status from
 // the query_runs table for target-scoped exports.
+//
+// The persisted run carries an explicit status (success / failed /
+// skipped). Older rows with no explicit status are treated by the
+// migration as success when error is empty and failed otherwise; this
+// function uses the same fallback so it works against pre-migration
+// data ingested by older tools.
 func BuildStatusFromRuns(runs []db.QueryRun) []CollectorStatus {
-	var statuses []CollectorStatus
+	statuses := make([]CollectorStatus, 0, len(runs))
 
 	for _, r := range runs {
-		if r.Error == "" {
+		status := r.Status
+		if status == "" {
+			if r.Error != "" {
+				status = "failed"
+			} else {
+				status = "success"
+			}
+		}
+
+		switch status {
+		case "skipped":
 			statuses = append(statuses, CollectorStatus{
-				ID:          r.QueryID,
-				Attempted:   true,
-				Status:      "success",
-				RowCount:    r.RowCount,
-				DurationMS:  r.DurationMS,
-				CollectedAt: r.CollectedAt,
+				ID:        r.QueryID,
+				Attempted: false,
+				Status:    "skipped",
+				Reason:    r.Reason,
+				Detail:    r.Error,
 			})
-		} else {
-			reason := classifyRunError(r.Error)
+		case "failed":
+			reason := r.Reason
+			if reason == "" {
+				reason = classifyRunError(r.Error)
+			}
 			statuses = append(statuses, CollectorStatus{
 				ID:          r.QueryID,
 				Attempted:   true,
 				Status:      "failed",
 				Reason:      reason,
 				Detail:      r.Error,
+				DurationMS:  r.DurationMS,
+				CollectedAt: r.CollectedAt,
+			})
+		default: // success
+			statuses = append(statuses, CollectorStatus{
+				ID:          r.QueryID,
+				Attempted:   true,
+				Status:      "success",
+				RowCount:    r.RowCount,
 				DurationMS:  r.DurationMS,
 				CollectedAt: r.CollectedAt,
 			})

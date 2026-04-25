@@ -402,6 +402,10 @@ type QueryRun struct {
 	RowCount    int
 	Error       string
 	CreatedAt   string
+	// Status is one of "success", "failed", "skipped". Skipped runs have
+	// Error empty and Reason populated (e.g. "config_disabled").
+	Status string
+	Reason string
 }
 
 type QueryResult struct {
@@ -419,8 +423,8 @@ func (d *DB) InsertQueryRunBatch(runs []QueryRun, results []QueryResult) error {
 	defer tx.Rollback()
 
 	runStmt, err := tx.Prepare(`INSERT INTO query_runs
-		(id, target_id, snapshot_id, query_id, collected_at, pg_version, duration_ms, row_count, error, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		(id, target_id, snapshot_id, query_id, collected_at, pg_version, duration_ms, row_count, error, created_at, status, reason)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
@@ -433,7 +437,16 @@ func (d *DB) InsertQueryRunBatch(runs []QueryRun, results []QueryResult) error {
 	defer resStmt.Close()
 
 	for _, r := range runs {
-		if _, err := runStmt.Exec(r.ID, r.TargetID, r.SnapshotID, r.QueryID, r.CollectedAt, r.PGVersion, r.DurationMS, r.RowCount, r.Error, r.CreatedAt); err != nil {
+		status := r.Status
+		if status == "" {
+			// Backwards-compatible default: derive from Error.
+			if r.Error != "" {
+				status = "failed"
+			} else {
+				status = "success"
+			}
+		}
+		if _, err := runStmt.Exec(r.ID, r.TargetID, r.SnapshotID, r.QueryID, r.CollectedAt, r.PGVersion, r.DurationMS, r.RowCount, r.Error, r.CreatedAt, status, r.Reason); err != nil {
 			return fmt.Errorf("insert run %s: %w", r.ID, err)
 		}
 	}
@@ -452,7 +465,7 @@ func (d *DB) InsertQueryRunBatch(runs []QueryRun, results []QueryResult) error {
 }
 
 func (d *DB) GetAllQueryRuns(since, until string) ([]QueryRun, error) {
-	query := "SELECT id, target_id, snapshot_id, query_id, collected_at, pg_version, duration_ms, row_count, error, created_at FROM query_runs WHERE 1=1"
+	query := "SELECT id, target_id, snapshot_id, query_id, collected_at, pg_version, duration_ms, row_count, error, created_at, status, reason FROM query_runs WHERE 1=1"
 	var args []any
 	if since != "" {
 		query += " AND collected_at >= ?"
@@ -469,7 +482,7 @@ func (d *DB) GetAllQueryRuns(since, until string) ([]QueryRun, error) {
 // GetQueryRunsByTarget returns query runs filtered by target ID and
 // optional time range (MTE-R001).
 func (d *DB) GetQueryRunsByTarget(targetID int64, since, until string) ([]QueryRun, error) {
-	query := "SELECT id, target_id, snapshot_id, query_id, collected_at, pg_version, duration_ms, row_count, error, created_at FROM query_runs WHERE target_id = ?"
+	query := "SELECT id, target_id, snapshot_id, query_id, collected_at, pg_version, duration_ms, row_count, error, created_at, status, reason FROM query_runs WHERE target_id = ?"
 	args := []any{targetID}
 	if since != "" {
 		query += " AND collected_at >= ?"
@@ -503,7 +516,7 @@ func (d *DB) scanQueryRuns(query string, args ...any) ([]QueryRun, error) {
 	var out []QueryRun
 	for rows.Next() {
 		var r QueryRun
-		if err := rows.Scan(&r.ID, &r.TargetID, &r.SnapshotID, &r.QueryID, &r.CollectedAt, &r.PGVersion, &r.DurationMS, &r.RowCount, &r.Error, &r.CreatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.TargetID, &r.SnapshotID, &r.QueryID, &r.CollectedAt, &r.PGVersion, &r.DurationMS, &r.RowCount, &r.Error, &r.CreatedAt, &r.Status, &r.Reason); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

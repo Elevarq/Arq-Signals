@@ -94,6 +94,7 @@ func TestExportQueryRunsNoPasswordField(t *testing.T) {
 		"ID": true, "TargetID": true, "SnapshotID": true,
 		"QueryID": true, "CollectedAt": true, "PGVersion": true,
 		"DurationMS": true, "RowCount": true, "Error": true, "CreatedAt": true,
+		"Status": true, "Reason": true,
 	}
 
 	for i := 0; i < runType.NumField(); i++ {

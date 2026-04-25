@@ -34,8 +34,9 @@ type Collector struct {
 	maxConcurrentTargets int
 	targetTimeout        time.Duration
 	queryTimeout         time.Duration
-	allowUnsafeRole      bool
-	bypassedChecks       []string
+	allowUnsafeRole        bool
+	highSensitivityEnabled bool
+	bypassedChecks         []string
 	bypassedChecksMu     sync.Mutex
 	pools                map[string]*pgxpool.Pool
 	poolsMu              sync.Mutex
@@ -120,6 +121,14 @@ func WithAllowUnsafeRole(allow bool) CollectorOption {
 // GetAllowUnsafeRole returns whether unsafe role mode is enabled.
 func (c *Collector) GetAllowUnsafeRole() bool {
 	return c.allowUnsafeRole
+}
+
+// WithHighSensitivityCollectors enables the four definition-text collectors
+// flagged HighSensitivity in the query catalog (R075). Off by default.
+func WithHighSensitivityCollectors(enabled bool) CollectorOption {
+	return func(c *Collector) {
+		c.highSensitivityEnabled = enabled
+	}
 }
 
 // recordBypassedChecks stores the specific checks that were bypassed in unsafe mode.
@@ -322,10 +331,13 @@ func (c *Collector) collectTarget(ctx context.Context, tgt config.TargetConfig, 
 	extensions := detectExtensions(ctx, tx)
 
 	// Step 3: Filter eligible queries.
-	eligible := pgqueries.Filter(pgqueries.FilterParams{
-		PGMajorVersion: pgMajor,
-		Extensions:     extensions,
-	})
+	filterParams := pgqueries.FilterParams{
+		PGMajorVersion:         pgMajor,
+		Extensions:             extensions,
+		HighSensitivityEnabled: c.highSensitivityEnabled,
+	}
+	eligible := pgqueries.Filter(filterParams)
+	gatedHighSensitivityIDs := pgqueries.HighSensitivityIDs(filterParams)
 
 	// Step 3b: Apply cadence planner unless forceAll.
 	queries := eligible
@@ -407,6 +419,8 @@ func (c *Collector) collectTarget(ctx context.Context, tgt config.TargetConfig, 
 
 		if qErr != nil {
 			run.Error = qErr.Error()
+			run.Status = "failed"
+			run.Reason = classifyRunError(run.Error)
 			if isPermissionDenied(qErr) {
 				slog.Warn("query permission denied — grant pg_monitor to the monitoring role",
 					"query", q.ID, "target", tgt.Name)
@@ -429,6 +443,7 @@ func (c *Collector) collectTarget(ctx context.Context, tgt config.TargetConfig, 
 		}
 
 		run.RowCount = len(rows)
+		run.Status = "success"
 		runs = append(runs, run)
 
 		// Encode result as NDJSON.
@@ -451,6 +466,25 @@ func (c *Collector) collectTarget(ctx context.Context, tgt config.TargetConfig, 
 
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit tx for %s: %w", tgt.Name, err)
+	}
+
+	// Step 4b: Record gated high-sensitivity collectors as skipped runs so
+	// collector_status.json contains exactly one entry per registered
+	// collector that was relevant to this target. The operator can see the
+	// gate is active without having to compare against the registry.
+	for _, id := range gatedHighSensitivityIDs {
+		runID := ulid.MustNew(ulid.Timestamp(now), c.entropy).String()
+		runs = append(runs, db.QueryRun{
+			ID:          runID,
+			TargetID:    targetID,
+			SnapshotID:  snapID,
+			QueryID:     id,
+			CollectedAt: collectedAt,
+			PGVersion:   versionStr,
+			CreatedAt:   collectedAt,
+			Status:      "skipped",
+			Reason:      "config_disabled",
+		})
 	}
 
 	// Step 5: Batch insert query runs + results.

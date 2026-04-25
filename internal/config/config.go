@@ -22,16 +22,17 @@ type Config struct {
 }
 
 type SignalsConfig struct {
-	PollInterval         time.Duration `yaml:"-"`
-	PollIntervalS        string        `yaml:"poll_interval"` // e.g. "5m"
-	RetentionDays        int           `yaml:"retention_days"`
-	LogLevel             string        `yaml:"log_level"`
-	LogJSON              bool          `yaml:"log_json"`
-	MaxConcurrentTargets int           `yaml:"max_concurrent_targets"`
-	TargetTimeout        time.Duration `yaml:"-"`
-	TargetTimeoutS       string        `yaml:"target_timeout"`
-	QueryTimeout         time.Duration `yaml:"-"`
-	QueryTimeoutS        string        `yaml:"query_timeout"`
+	PollInterval                    time.Duration `yaml:"-"`
+	PollIntervalS                   string        `yaml:"poll_interval"` // e.g. "5m"
+	RetentionDays                   int           `yaml:"retention_days"`
+	LogLevel                        string        `yaml:"log_level"`
+	LogJSON                         bool          `yaml:"log_json"`
+	MaxConcurrentTargets            int           `yaml:"max_concurrent_targets"`
+	TargetTimeout                   time.Duration `yaml:"-"`
+	TargetTimeoutS                  string        `yaml:"target_timeout"`
+	QueryTimeout                    time.Duration `yaml:"-"`
+	QueryTimeoutS                   string        `yaml:"query_timeout"`
+	HighSensitivityCollectorsEnabled bool          `yaml:"high_sensitivity_collectors_enabled"`
 }
 
 type TargetConfig struct {
@@ -264,6 +265,11 @@ func applyEnvOverrides(cfg *Config) error {
 	}
 	if v := os.Getenv("ARQ_SIGNALS_API_TOKEN"); v != "" {
 		cfg.API.APIToken = v
+	}
+	if b, ok, err := parseEnvBool("ARQ_SIGNALS_HIGH_SENSITIVITY_COLLECTORS_ENABLED"); err != nil {
+		return err
+	} else if ok {
+		cfg.Signals.HighSensitivityCollectorsEnabled = b
 	}
 	// File takes precedence over the raw env var when both are set —
 	// matches the _FILE convention used by the official postgres image.
