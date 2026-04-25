@@ -1,4 +1,4 @@
-.PHONY: build test lint vet clean
+.PHONY: build test lint vet clean boundary docker-build
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
