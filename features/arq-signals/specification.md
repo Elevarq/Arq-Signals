@@ -527,6 +527,61 @@ given export contains application-authored SQL definitions (R075)
 without having to parse the body of the ZIP, and to align the
 export against the daemon version that produced it.
 
+### Operational metrics endpoint
+
+**ARQ-SIGNALS-R079**: The system shall expose an optional Prometheus
+`/metrics` endpoint that publishes **operational health metrics
+about the Arq Signals daemon itself**. The endpoint shall **never**
+expose collected PostgreSQL data, SQL text, query results, view or
+function definitions, or any sensitive payload — its scope is
+limited to counters, gauges, and histograms describing the daemon's
+own behaviour.
+
+The endpoint is **disabled by default**. It is enabled by setting
+`signals.metrics_enabled: true` (or the equivalent
+`ARQ_SIGNALS_METRICS_ENABLED=true` environment variable). The
+serving path defaults to `/metrics` and may be overridden via
+`signals.metrics_path` (or `ARQ_SIGNALS_METRICS_PATH`). Setting the
+path to `/health` is forbidden — the unauthenticated health endpoint
+is reserved for liveness probes.
+
+When enabled, the endpoint is mounted on the same HTTP listener as
+the rest of the API and inherits the existing bearer-token auth
+contract (R011). This is consistent with the rest of the API surface
+and gives operators a single auth surface to manage. Operators that
+prefer unauthenticated scraping should bind the listener to
+loopback or to an internal network and rely on network-level
+controls; the daemon itself does not relax auth on a per-path basis.
+
+The metric set shall be exactly:
+
+| Metric | Type | Labels | Meaning |
+|---|---|---|---|
+| `arq_signal_collection_cycles_total` | counter | `target`, `status` | Per-target collection cycles, labelled `success` / `partial` / `failed`. |
+| `arq_signal_collection_failures_total` | counter | `target`, `reason` | Per-target hard failures (`reason` ∈ `connect_error`, `safety_check`, `persistence`, `internal`). |
+| `arq_signal_collection_duration_seconds` | histogram | `target`, `status` | Wall-clock duration of each cycle. |
+| `arq_signal_collectors_succeeded_total` | counter | `target` | Sum of per-cycle successful collector counts. |
+| `arq_signal_collectors_failed_total` | counter | `target`, `reason` | Sum of per-cycle failed collector counts; `reason` is the same enum used in `collector_status.json` (`permission_denied`, `timeout`, `execution_error`). |
+| `arq_signal_collectors_skipped_total` | counter | `target`, `reason` | Sum of per-cycle skipped collector counts; `reason` ∈ `config_disabled`, `version_unsupported`, `extension_missing`. |
+| `arq_signal_export_requests_total` | counter | `status` | All export requests, labelled `success` / `failed`. |
+| `arq_signal_export_failures_total` | counter | `error_category` | Failed exports, keyed by the same category emitted in audit logs. |
+| `arq_signal_export_duration_seconds` | histogram | `status` | Wall-clock duration of each export. |
+| `arq_signal_sqlite_persistence_failures_total` | counter | (none) | Count of `InsertCollectionAtomic` failures (R077 rollbacks). |
+| `arq_signal_last_successful_collection_timestamp` | gauge | `target` | Unix seconds of the most recent successful collection per target. |
+| `arq_signal_high_sensitivity_collectors_enabled` | gauge | (none) | `1` if the R075 gate is open, `0` otherwise. |
+
+Label cardinality is bounded:
+
+- `target` ranges over operator-configured targets (a small fixed
+  set per deployment).
+- `status`, `reason`, and `error_category` are fixed enums whose
+  values are listed in the table.
+
+The following label values are **explicitly forbidden** because they
+would create unbounded cardinality or reintroduce sensitive content:
+collector / query IDs, database names, host names, user names, file
+paths, raw error message bodies, SQL text.
+
 ## Invariants
 
 - **INV-SIGNALS-01**: Collector output is passive evidence, not interpretation.
