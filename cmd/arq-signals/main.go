@@ -17,6 +17,7 @@ import (
 	"github.com/elevarq/arq-signals/internal/config"
 	"github.com/elevarq/arq-signals/internal/db"
 	"github.com/elevarq/arq-signals/internal/export"
+	"github.com/elevarq/arq-signals/internal/metrics"
 	"github.com/elevarq/arq-signals/internal/pgqueries"
 	"github.com/elevarq/arq-signals/internal/safety"
 )
@@ -121,6 +122,15 @@ func run() error {
 	// Sync query catalog.
 	syncQueryCatalog(store)
 
+	// Initialize the optional Prometheus registry. nil when
+	// signals.metrics_enabled is false; passing nil downstream is the
+	// no-op contract for every recorder.
+	var metricsReg *metrics.Registry
+	if cfg.Signals.MetricsEnabled {
+		metricsReg = metrics.New()
+		metricsReg.SetHighSensitivityEnabled(cfg.Signals.HighSensitivityCollectorsEnabled)
+	}
+
 	// Initialize collector (no license gate, no stats engine).
 	coll := collector.New(store, cfg.Targets, cfg.Signals.PollInterval, cfg.Signals.RetentionDays,
 		collector.WithMaxConcurrentTargets(cfg.Signals.MaxConcurrentTargets),
@@ -128,6 +138,7 @@ func run() error {
 		collector.WithQueryTimeout(cfg.Signals.QueryTimeout),
 		collector.WithAllowUnsafeRole(cfg.AllowUnsafeRole),
 		collector.WithHighSensitivityCollectors(cfg.Signals.HighSensitivityCollectorsEnabled),
+		collector.WithMetrics(metricsReg),
 	)
 
 	if cfg.AllowUnsafeRole {
@@ -164,11 +175,17 @@ func run() error {
 	}
 
 	// Start HTTP API server.
+	metricsPath := cfg.Signals.MetricsPath
+	if metricsReg != nil {
+		slog.Info("metrics endpoint enabled", "path", metricsPath)
+	}
 	deps := &api.Deps{
-		DB:        store,
-		Collector: coll,
-		Exporter:  exporter,
-		Targets:   cfg.Targets,
+		DB:          store,
+		Metrics:     metricsReg,
+		MetricsPath: metricsPath,
+		Collector:   coll,
+		Exporter:    exporter,
+		Targets:     cfg.Targets,
 	}
 	srv := api.NewServer(cfg.API.ListenAddr, cfg.API.ReadTimeout, cfg.API.WriteTimeout, cfg.API.APIToken, deps)
 

@@ -16,10 +16,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+
 	"github.com/elevarq/arq-signals/internal/collector"
 	"github.com/elevarq/arq-signals/internal/config"
 	"github.com/elevarq/arq-signals/internal/db"
 	"github.com/elevarq/arq-signals/internal/export"
+	"github.com/elevarq/arq-signals/internal/metrics"
 	"github.com/elevarq/arq-signals/internal/safety"
 )
 
@@ -29,6 +32,13 @@ type Deps struct {
 	Collector *collector.Collector
 	Exporter  *export.Builder
 	Targets   []config.TargetConfig
+	// Metrics is the optional Prometheus registry. When nil the
+	// /metrics endpoint is not registered. Pass non-nil only when
+	// signals.metrics_enabled is true.
+	Metrics *metrics.Registry
+	// MetricsPath is the URL path the /metrics endpoint is mounted on.
+	// Ignored when Metrics is nil.
+	MetricsPath string
 }
 
 // Server is the Arq Signals HTTP API server.
@@ -46,6 +56,21 @@ func NewServer(addr string, readTimeout, writeTimeout time.Duration, apiToken st
 	mux.HandleFunc("GET /status", handleStatus(deps))
 	mux.HandleFunc("POST /collect/now", handleCollectNow(deps))
 	mux.HandleFunc("GET /export", handleExport(deps))
+
+	// Optional Prometheus /metrics endpoint (R079). Off unless an
+	// explicit Metrics registry is supplied. Inherits the same bearer
+	// token auth as the rest of the API; operators that want
+	// unauthenticated scraping should bind locally and use
+	// network-level controls.
+	if deps.Metrics != nil && deps.MetricsPath != "" {
+		mux.Handle("GET "+deps.MetricsPath, promhttp.HandlerFor(
+			deps.Metrics.Gatherer(),
+			promhttp.HandlerOpts{
+				ErrorLog:      slog.NewLogLogger(slog.Default().Handler(), slog.LevelError),
+				ErrorHandling: promhttp.ContinueOnError,
+			},
+		))
+	}
 
 	// Wrap with middleware: recovery -> logging -> token auth.
 	tokenLimiter := newTokenRateLimiter()
@@ -170,6 +195,8 @@ func handleExport(deps *Deps) http.HandlerFunc {
 					"size_bytes", 0,
 					"error_category", "invalid_target_id",
 				)
+				deps.Metrics.RecordExport("failed", time.Since(start).Seconds())
+				deps.Metrics.RecordExportFailure("invalid_target_id")
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid target_id"})
 				return
 			}
@@ -196,6 +223,8 @@ func handleExport(deps *Deps) http.HandlerFunc {
 				"size_bytes", 0,
 				"error_category", "builder_error",
 			)
+			deps.Metrics.RecordExport("failed", time.Since(start).Seconds())
+			deps.Metrics.RecordExportFailure("builder_error")
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "export failed"})
 			return
 		}
@@ -212,6 +241,8 @@ func handleExport(deps *Deps) http.HandlerFunc {
 				"size_bytes", buf.Len(),
 				"error_category", "write_error",
 			)
+			deps.Metrics.RecordExport("failed", time.Since(start).Seconds())
+			deps.Metrics.RecordExportFailure("write_error")
 			return
 		}
 		safety.AuditLog("export_completed",
@@ -219,6 +250,7 @@ func handleExport(deps *Deps) http.HandlerFunc {
 			"duration_ms", time.Since(start).Milliseconds(),
 			"size_bytes", buf.Len(),
 		)
+		deps.Metrics.RecordExport("success", time.Since(start).Seconds())
 	}
 }
 

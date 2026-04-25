@@ -35,6 +35,13 @@ signals:
                               # (view/matview/trigger definitions and
                               # function bodies). See "High-sensitivity
                               # collectors" below. Default: false.
+  metrics_enabled: false      # Expose the Prometheus /metrics endpoint
+                              # on the API listener. Default: false.
+                              # The endpoint emits operational metrics
+                              # only — see R079 for the full set.
+  metrics_path: /metrics      # Path the metrics endpoint is mounted on
+                              # when metrics_enabled is true.
+                              # Setting this to /health is rejected.
 
 # PostgreSQL targets (one or more)
 targets:
@@ -82,6 +89,8 @@ fields:
 | `ARQ_SIGNALS_TARGET_TIMEOUT` | `signals.target_timeout` | `60s` | |
 | `ARQ_SIGNALS_QUERY_TIMEOUT` | `signals.query_timeout` | `10s` | |
 | `ARQ_SIGNALS_HIGH_SENSITIVITY_COLLECTORS_ENABLED` | `signals.high_sensitivity_collectors_enabled` | `false` | Opt-in for definition/body collectors |
+| `ARQ_SIGNALS_METRICS_ENABLED` | `signals.metrics_enabled` | `false` | Enable the Prometheus `/metrics` endpoint (R079) |
+| `ARQ_SIGNALS_METRICS_PATH` | `signals.metrics_path` | `/metrics` | Path for the metrics endpoint when enabled |
 | `ARQ_SIGNALS_LISTEN_ADDR` | `api.listen_addr` | `127.0.0.1:8081` | |
 | `ARQ_SIGNALS_WRITE_TIMEOUT` | `api.write_timeout` | `180s` | |
 | `ARQ_SIGNALS_DB_PATH` | `database.path` | `/data/arq-signals.db` | |
@@ -190,6 +199,9 @@ starting any collection. Validation produces two outcomes:
   `require`) on any enabled target; missing `sslrootcert_file` when
   `sslmode` is `verify-ca` / `verify-full`; `ARQ_ALLOW_INSECURE_PG_TLS`
   set to true.
+- `signals.metrics_path` does not start with `/`, equals `/health`,
+  or collides with an existing API path (`/status`, `/collect/now`,
+  `/export`).
 
 ### Warnings (log, continue startup)
 
