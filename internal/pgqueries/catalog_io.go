@@ -10,8 +10,22 @@ func init() {
 	// pg_stat_io_v1: per (backend_type, object, context) physical I/O
 	// counters from pg_stat_io. Introduced in PG 16.
 	//
-	// op_bytes is emitted so the analyzer can convert block counts to
-	// bytes without assuming the default BLCKSZ.
+	// Output schema (normalized across PG majors):
+	//   - reads / writes / extends                    (op counts; all majors)
+	//   - read_time / write_time / extend_time        (timings; all majors)
+	//   - writebacks / writeback_time / hits          (all majors)
+	//   - evictions / reuses / fsyncs / fsync_time    (all majors)
+	//   - op_bytes      (PG 16/17 native; NULL on PG 18+)
+	//   - read_bytes    (NULL on PG 16/17; PG 18+ native)
+	//   - write_bytes   (NULL on PG 16/17; PG 18+ native)
+	//   - extend_bytes  (NULL on PG 16/17; PG 18+ native)
+	//   - stats_reset
+	//
+	// PG 18 split op_bytes (single per-row size) into separate
+	// read_bytes / write_bytes / extend_bytes columns. The catalog
+	// emits the union of both schemas so consumers see a stable column
+	// set; only the populated subset varies. The PG 18 SQL lives in
+	// catalog_pg18.go.
 	//
 	// Specification: specifications/collectors/pg_stat_io_v1.md
 	Register(QueryDef{
@@ -31,6 +45,9 @@ func init() {
 			extends,
 			extend_time,
 			op_bytes,
+			NULL::bigint AS read_bytes,
+			NULL::bigint AS write_bytes,
+			NULL::bigint AS extend_bytes,
 			hits,
 			evictions,
 			reuses,
@@ -48,6 +65,11 @@ func init() {
 	// pg_stat_wal_v1: cluster-wide WAL generation, write, and sync counters.
 	// Introduced in PG 14. Feeds wal-retention-risk, checkpoint-pressure,
 	// and the io-cost-calibration detector's WAL pressure dimension.
+	//
+	// PG 18 renamed wal_write -> wal_writes and wal_sync -> wal_syncs.
+	// The catalog normalizes to the original column names so consumers
+	// see a stable schema across majors. The PG 18 SQL lives in
+	// catalog_pg18.go.
 	//
 	// Specification: specifications/collectors/pg_stat_wal_v1.md
 	Register(QueryDef{

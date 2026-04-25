@@ -1,47 +1,8 @@
 package collector
 
-import (
-	"context"
-	"regexp"
-	"strconv"
-
-	"github.com/jackc/pgx/v5"
-)
-
-var pgVersionRe = regexp.MustCompile(`PostgreSQL (\d+)`)
-
-// parsePGMajorVersion extracts the major version number from a PostgreSQL version string.
-// "PostgreSQL 16.2 on ..." -> 16. Returns 0 if not parseable.
-func parsePGMajorVersion(full string) int {
-	m := pgVersionRe.FindStringSubmatch(full)
-	if len(m) < 2 {
-		return 0
-	}
-	v, err := strconv.Atoi(m[1])
-	if err != nil {
-		return 0
-	}
-	return v
-}
-
-// detectExtensions queries pg_extension and returns a list of installed extension names.
-func detectExtensions(ctx context.Context, tx pgx.Tx) []string {
-	rows, err := tx.Query(ctx, "SELECT extname FROM pg_extension")
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
-
-	var exts []string
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			continue
-		}
-		exts = append(exts, name)
-	}
-	return exts
-}
+// parsePGMajorVersion and detectExtensions were retired by R081 in
+// favour of pgqueries.Discover, which performs the same probes (and
+// more) inside a single transaction with proper error handling.
 
 // populateSnapshotField maps query results into the SnapshotData struct fields
 // for backward compatibility with the monolithic snapshot format.
