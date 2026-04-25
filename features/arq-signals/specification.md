@@ -833,8 +833,201 @@ remains in Arq's analysis layer, not in obscured collector behaviour.
 |---|---|---|
 | 1 | `POST /collect/now` accepts optional JSON body with `targets` field. Empty array, unknown names, or disabled names → 400 with rejected list. Backward compatible with empty-body POSTs. Audit `actor` remains `local_operator`. | Implemented from R082 directly. |
 | 2 | `request_id` (regex `^[A-Za-z0-9_-]+$`, ≤32 chars) + `reason` (≤64 chars) fields. Audit-event extension with `requested_targets` / `accepted_targets` / `rejected_targets`. Correlation id propagated through per-target `collection_started` / `collection_completed` events. Audit `actor` still `local_operator`. | Implemented from R082 directly. |
-| 3 | `signals.mode: standalone \| arq_managed` config flag. Separate `signals.arq_control_plane_token` so the operator can distinguish actor identity in audit events. Mode B requires the flag to be set. **First phase in which the audit `actor` field can carry `arq_control_plane`.** | Requires a small new spec rule (R083) to govern the config knobs. |
-| 4 | Collector profiles, entitlement metadata exchange, per-`request_id` outcome lookup endpoint, status callback channel. Optional rate limiting on accepted Mode B requests if real-world abuse patterns appear. | Out of scope for R082. Separate spec. |
+| 3 | `signals.mode: standalone \| arq_managed` config flag. Separate `signals.arq_control_plane_token` so the operator can distinguish actor identity in audit events. Mode B requires the flag to be set. **First phase in which the audit `actor` field can carry `arq_control_plane`.** | Specified in R083 (see below). |
+| 4 | Collector profiles, entitlement metadata exchange, per-`request_id` outcome lookup endpoint, status callback channel. Optional rate limiting on accepted Mode B requests if real-world abuse patterns appear. | Out of scope for R082 / R083. Separate spec. |
+
+### Mode B authentication and configuration
+
+**ARQ-SIGNALS-R083**: When the operator opts into Mode B (R082) by
+setting `signals.mode: arq_managed`, the system shall accept
+authenticated requests from the Arq control plane via a **separate
+bearer token** distinct from the local API token. The audit `actor`
+field is derived from *which token matched* — never from request
+shape — so audit identity cannot be forged by a caller that holds
+only the local API token.
+
+This rule is **DESIGN-ONLY**. It defines the contract for the R082
+Future-implementation-plan Phase 3 row; runtime behaviour lands in
+a single follow-up implementation slice. R083 does not by itself
+introduce any code or operator-visible behaviour change.
+
+#### Config proposal
+
+```yaml
+signals:
+  # R083: Mode B opt-in. "standalone" (default) keeps Phase 1 /
+  # Phase 2 behaviour byte-for-byte. "arq_managed" activates the
+  # arq_control_plane_token check.
+  mode: standalone
+
+  # R083: Separate bearer token for the Arq control plane.
+  # Used ONLY when mode=arq_managed. Supplied via file (preferred)
+  # or env var; never as a YAML literal — same posture as
+  # api.token (R011).
+  arq_control_plane_token_file: /etc/arq/control-plane.token
+  # alternative:
+  # arq_control_plane_token_env: ARQ_CONTROL_PLANE_TOKEN
+```
+
+| Field | Type | Default | Validation |
+|---|---|---|---|
+| `signals.mode` | enum `standalone` \| `arq_managed` | `standalone` | hard error on any other value |
+| `signals.arq_control_plane_token_file` | path | empty | required when `mode: arq_managed`; file is re-read on every authentication attempt to support rotation without restart |
+| `signals.arq_control_plane_token_env` | env-var name | empty | mutually exclusive with `_file` |
+
+The token value is **never accepted as a YAML literal** — same
+posture as `api.token`. R078's audit-attribute denylist keeps
+the token out of any audit record.
+
+Env-var overrides (consistent with R076 / appendix B):
+
+- `ARQ_SIGNALS_MODE` → `signals.mode`
+- `ARQ_SIGNALS_ARQ_CONTROL_PLANE_TOKEN_FILE` → file path
+- `ARQ_SIGNALS_ARQ_CONTROL_PLANE_TOKEN_ENV` → name of the env var
+  carrying the token (indirection mirrors `password_env`)
+
+#### Auth behaviour
+
+The existing bearer-token middleware (R011) is extended to
+compare the supplied token to **both** configured tokens in
+constant time:
+
+```
+Authorization: Bearer <token>
+       │
+       ├─ matches api.token                   → actor = local_operator
+       ├─ matches arq_control_plane_token     → actor = arq_control_plane
+       │  (only when mode=arq_managed)
+       └─ matches neither                     → 401, rate limiter records failure
+```
+
+Once the actor is determined, it is attached to the request
+context and surfaced on every audit event the request emits.
+The actor never changes mid-request and never depends on request
+body shape (R082 invariant carried forward).
+
+In `mode=standalone`, the `arq_control_plane_token` config (if
+present) is **ignored at auth time** — only `api.token` is
+consulted. A request that would have matched the control-plane
+token simply gets a 401, identical to any other unknown token.
+This keeps the standalone deployment posture identical to
+Phase 1 / Phase 2.
+
+#### Audit behaviour
+
+The Phase 2 actor invariant ("always `local_operator`") relaxes:
+
+| Phase | Audit `actor` source |
+|---|---|
+| 1 / 2 | always `local_operator` (field exists but always carries this value) |
+| 3 | `local_operator` when `api.token` matched; `arq_control_plane` when `arq_control_plane_token` matched, **and only when `mode: arq_managed`** |
+
+Audit events whose `actor` value is now sourced from the auth
+match:
+
+- `collect_now_requested` / `collect_now_rejected` /
+  `collect_now_dropped` (R082 Phase 2 — these already carry
+  `actor`; only the value changes)
+- `collection_started` / `collection_completed` when correlated
+  by `request_id`
+- `export_requested` / `export_completed` (R078) — Phase 3
+  extends these to carry `actor` so an auditor can distinguish
+  exports triggered by the local operator from those triggered
+  by the control plane
+
+A new startup audit event records the active mode and whether a
+control-plane token is configured. The token *value* is never
+logged — only its configured/not-configured boolean status:
+
+```
+audit_event=mode_configured
+mode=arq_managed
+arq_control_plane_token_configured=true
+```
+
+#### Backward compatibility
+
+- `mode: standalone` is the default. A daemon with no
+  `signals.mode` setting behaves byte-for-byte like Phase 2.
+- `api.token` continues to authorise everything it authorises
+  today, in both modes. Operators do not need to migrate.
+- The 202 / 400 / 401 response contracts on `/collect/now` and
+  `/export` are unchanged.
+- Phase 1 / Phase 2 audit-event names and attribute schemas are
+  unchanged on the wire — only the `actor` value can now carry
+  `arq_control_plane` (and only in Mode B with the control-plane
+  token).
+- Adding `actor` to `export_requested` / `export_completed` is
+  additive: existing parsers that don't read the field continue
+  to work.
+
+#### Security failure cases
+
+R076's `ValidateStrict` gains the following hard errors. Each
+aborts startup with an actionable message:
+
+| Failure | Cause |
+|---|---|
+| `signals.mode is "arq_managed" but no control-plane token is configured` | Operator activated Mode B without supplying a token. |
+| `signals.arq_control_plane_token is identical to api.token` | The two tokens must be distinct so `actor` is unambiguous. |
+| `signals.arq_control_plane_token is shorter than 32 characters` | Same length floor as the auto-generated `api.token`. |
+| `signals.arq_control_plane_token_file` does not exist or is unreadable | Symmetric with the existing `api.token_file` handling. |
+| `signals.arq_control_plane_token_file` and `_env` both set | Pick one — same posture as multi-credential rejection on targets. |
+| `signals.mode` is any value other than `standalone` or `arq_managed` | Typo guard. |
+
+Runtime considerations (not startup errors):
+
+- **Token rotation:** the file is re-read on every authentication
+  attempt, so rotating the token does not require restarting the
+  daemon.
+- **Cross-actor confusion:** a local operator who guesses or
+  steals the Arq token would see their requests audited as
+  `actor=arq_control_plane`. This is acceptable — token
+  compromise of either token is a separate incident class. The
+  audit field reflects reality: whoever sent the request had the
+  control-plane token. R024's per-IP rate limiter on invalid
+  attempts continues to apply.
+- **Replay protection:** out of scope for R083. The bearer token
+  is the only auth surface. Higher-strength auth (mTLS, signed
+  JWTs, request-bound nonces) is Phase 4+ work.
+- **Network-level attacks:** Mode B does **not** require Arq to
+  be remote. The recommended deployment is Arq in-cluster with
+  Arq Signal, both processes on a private network. R011's
+  loopback-bind guidance still applies.
+
+#### Tests planned
+
+| TC | Coverage |
+|---|---|
+| TC-SIG-081 | `signals.mode` defaults to `standalone` when unset. |
+| TC-SIG-082 | `mode: arq_managed` without a configured control-plane token → startup error from `ValidateStrict`. |
+| TC-SIG-083 | `arq_control_plane_token` equal to `api.token` → startup error. |
+| TC-SIG-084 | `arq_control_plane_token` shorter than 32 chars → startup error. |
+| TC-SIG-085 | Both `_file` and `_env` configured → startup error. |
+| TC-SIG-086 | Request with valid `api.token` in any mode → 2xx with `actor=local_operator` in the corresponding audit event. |
+| TC-SIG-087 | Request with valid `arq_control_plane_token` in `mode=arq_managed` → 2xx with `actor=arq_control_plane`. |
+| TC-SIG-088 | Request with valid `arq_control_plane_token` in `mode=standalone` → 401 (token is ignored, treated as unknown). |
+| TC-SIG-089 | Request with unknown token → 401 + rate-limiter records failure (R024 unchanged). |
+| TC-SIG-090 | Token rotation: replacing the file's contents and re-issuing a request authenticates against the new value within the same process. |
+| TC-SIG-091 | `mode_configured` startup audit event emitted with mode and `arq_control_plane_token_configured` boolean; token value never appears in any audit attribute. |
+| TC-SIG-092 | `export_requested` / `export_completed` audit events carry the `actor` field, value derived from the matched token. |
+
+#### Non-goals (R083)
+
+- **No license validation in Arq Signal.** R082's licensing-model
+  invariant carries forward.
+- **No mTLS / signed JWTs / OIDC.** Higher-strength auth is
+  Phase 4+ work.
+- **No `mode: arq_managed_only` (refusing the local API token in
+  Mode B).** Possible future extension; R083 keeps the local
+  token usable in both modes so operators are never locked out
+  by an Arq outage.
+- **No per-`request_id` outcome lookup endpoint.** Phase 4+.
+- **No status callback channel.** Phase 4+.
+- **No collector profiles or entitlement metadata.** Separate
+  spec.
+- **No token-rotation API.** The file-based pattern already
+  supports zero-downtime rotation.
 
 ## Invariants
 
