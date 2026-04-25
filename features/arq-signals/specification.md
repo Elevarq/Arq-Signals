@@ -469,6 +469,64 @@ observable to readers or in exports.
 The specific storage engine is an implementation choice, but the guarantees
 above must be maintained.
 
+### Audit logging and export metadata
+
+**ARQ-SIGNALS-R078**: The system shall emit structured audit events
+covering the operationally significant lifecycle moments — startup
+configuration validation, per-target collection cycles, and export
+requests — and shall extend export metadata with the fields required
+to reconstruct the running posture of the daemon at the moment data
+was produced. The intent is to support SOC 2 / ISO 27001 readiness:
+auditors must be able to reconstruct *what* ran, *when*, *under what
+configuration*, and *what was exported*, without learning *which
+secrets* were involved.
+
+Audit events are slog records carrying the structured key
+`audit_event=<name>` plus typed attributes. Specifically:
+
+- **Startup events**:
+  - `audit_event=config_validated`, `status=ok|error`,
+    `warnings=N`, `hard_errors=N`.
+  - `audit_event=high_sensitivity_collectors`, `enabled=true|false`.
+  - `audit_event=targets_loaded`, `enabled=N`, `disabled=N`.
+- **Collection events** (per target, per cycle):
+  - `audit_event=collection_started`, `target=<name>`.
+  - `audit_event=collection_completed`, `target=<name>`,
+    `snapshot_id=<id>`, `status=success|partial|failed`,
+    `duration_ms=N`, `collectors_total=N`, `collectors_success=N`,
+    `collectors_failed=N`, `collectors_skipped=N`.
+- **Export events**:
+  - `audit_event=export_requested`, `source_ip=<ip>`,
+    `target_id=<id-or-empty>`, `since=<value>`, `until=<value>`.
+  - `audit_event=export_completed`, `status=success|failed`,
+    `duration_ms=N`, `size_bytes=N`, `error_category=<short tag>`
+    (only on failure).
+
+Audit events shall **never** include passwords, API tokens, full
+connection strings, query result payloads, or any other field that
+could exfiltrate secrets or production data. Field names that begin
+with `password`, contain `token`, or hold a DSN-like value
+(`postgres://`, `host=… password=…`) are explicitly banned from
+audit-event attributes.
+
+**Export metadata** (the `metadata.json` member of every export
+ZIP) shall include at minimum:
+
+| Field | Purpose |
+|-------|---------|
+| `arq_signals_version` | Build version of the daemon that produced the export. |
+| `schema_version` | Snapshot/export schema version. |
+| `generated_at` | Timestamp the export was produced (UTC, RFC 3339). |
+| `instance_id` | Stable identifier of the producing daemon instance. |
+| `target_name` | Target's logical name when the export is target-scoped; absent otherwise. |
+| `high_sensitivity_collectors_enabled` | Whether the high-sensitivity gate (R075) was open at collection time. |
+| `collector_status_schema_version` | Version of the `collector_status.json` schema, separate from the top-level snapshot schema. |
+
+These fields make it possible for an auditor to determine whether a
+given export contains application-authored SQL definitions (R075)
+without having to parse the body of the ZIP, and to align the
+export against the daemon version that produced it.
+
 ## Invariants
 
 - **INV-SIGNALS-01**: Collector output is passive evidence, not interpretation.
