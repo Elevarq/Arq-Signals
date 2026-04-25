@@ -1,0 +1,20 @@
+title = "arq-signals gitleaks configuration"
+
+# Inherit gitleaks' built-in default rules.
+[extend]
+useDefault = true
+
+# Documentation and example files contain illustrative curl examples
+# with placeholder bearer tokens (smoke-test-token, my-token, etc.).
+# These are deliberately fake values shown to operators and contain no
+# real secrets. Code under cmd/, internal/, snapshot/, tests/ is still
+# scanned; this allowlist scopes only to documentation and examples.
+[allowlist]
+description = "Allow placeholder tokens in documentation and example files"
+paths = [
+  '''^docs/.*''',
+  '''^examples/.*''',
+  '''^features/.*\.md$''',
+  '''^README\.md$''',
+  '''^CHANGELOG\.md$''',
+]

@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -18,7 +18,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.24"
+          go-version: "1.25"
           cache: true
 
       - name: Download modules
@@ -35,3 +35,34 @@ jobs:
           go test -v -run
           'TestNoAnalyzerImports|TestNoLLMCode|TestNoScoringCode|TestNoProprietaryContent|TestLicenseFileExists'
           ./tests/
+
+  security-scan:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Trivy filesystem scan (vuln + secret)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: "fs"
+          scan-ref: "."
+          scanners: "vuln,secret"
+          severity: "CRITICAL,HIGH"
+          exit-code: "1"
+
+      - name: Trivy config scan (Dockerfile + Helm)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: "config"
+          scan-ref: "."
+          severity: "CRITICAL,HIGH"
+          exit-code: "1"
+
+      - name: Install gitleaks
+        run: |
+          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz \
+            | tar -xz -C /usr/local/bin gitleaks
+
+      - name: Gitleaks detect
+        run: gitleaks detect --source . --verbose --exit-code 1
