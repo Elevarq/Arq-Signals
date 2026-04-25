@@ -4,6 +4,30 @@ All notable changes to Arq Signals will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.1] - 2026-04-25
+
+### Added
+- Target narrowing for POST /collect/now (R082 Phase 1)
+- request_id and reason support with end-to-end audit trace (R082 Phase 2)
+- Managed mode with dual-token authentication and actor separation (R083)
+- Control-plane documentation and audit model documentation
+
+### Fixed
+- Audit completeness: no silent request loss (overlap path now emits collect_now_dropped)
+- Audit metadata allowlist for curated fields (mode_configured event preserved)
+- Warning on empty control-plane token after rotation
+
+### Tests
+- Adversarial tests for malformed JSON, large payloads, and concurrent requests
+- Race detector coverage for concurrent POST /collect/now
+
+### Notes
+- No breaking changes
+- No spec changes
+- R080 (per-collector export view) not included in this release
+
+---
+
 ## [0.3.0] - 2026-04-25
 
 ### Added
