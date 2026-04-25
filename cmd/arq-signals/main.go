@@ -174,18 +174,57 @@ func run() error {
 		slog.Info("signals API token generated (auto)", "fingerprint", fp)
 	}
 
+	// R083: Mode B opt-in. Resolve the control-plane token at
+	// startup so cross-token rules (length floor, distinctness from
+	// api.token) are validated before serving any traffic. Per-
+	// request rotation is handled by ArqControlPlaneTokenFn below.
+	var arqControlPlaneTokenFn func() string
+	controlPlaneTokenConfigured := false
+	if cfg.Signals.Mode == config.ModeArqManaged {
+		startupToken, err := config.ResolveArqControlPlaneToken(cfg.Signals)
+		if err != nil {
+			return fmt.Errorf("resolve arq_control_plane_token: %w", err)
+		}
+		if err := config.ValidateModeBTokens(cfg, cfg.API.APIToken, startupToken); err != nil {
+			return fmt.Errorf("R083 cross-token validation: %w", err)
+		}
+		controlPlaneTokenConfigured = true
+		arqControlPlaneTokenFn = func() string {
+			// Re-read the source on every authentication attempt so
+			// rotating the file's contents takes effect on the next
+			// request without restarting the daemon. A read error
+			// here returns "" — the bearer comparison fails closed
+			// and the request gets a 401 like any other unknown
+			// token.
+			tok, err := config.ResolveArqControlPlaneToken(cfg.Signals)
+			if err != nil {
+				slog.Warn("arq_control_plane_token resolve failed", "err", err)
+				return ""
+			}
+			return tok
+		}
+	}
+
+	// Mode-configured startup audit event (R083). Token VALUE never
+	// logged — only the configured/not-configured boolean.
+	safety.AuditLog("mode_configured",
+		"mode", cfg.Signals.Mode,
+		"arq_control_plane_token_configured", controlPlaneTokenConfigured,
+	)
+
 	// Start HTTP API server.
 	metricsPath := cfg.Signals.MetricsPath
 	if metricsReg != nil {
 		slog.Info("metrics endpoint enabled", "path", metricsPath)
 	}
 	deps := &api.Deps{
-		DB:          store,
-		Metrics:     metricsReg,
-		MetricsPath: metricsPath,
-		Collector:   coll,
-		Exporter:    exporter,
-		Targets:     cfg.Targets,
+		DB:                     store,
+		Metrics:                metricsReg,
+		MetricsPath:            metricsPath,
+		Collector:              coll,
+		Exporter:               exporter,
+		Targets:                cfg.Targets,
+		ArqControlPlaneTokenFn: arqControlPlaneTokenFn,
 	}
 	srv := api.NewServer(cfg.API.ListenAddr, cfg.API.ReadTimeout, cfg.API.WriteTimeout, cfg.API.APIToken, deps)
 

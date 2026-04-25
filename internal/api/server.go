@@ -42,6 +42,13 @@ type Deps struct {
 	// MetricsPath is the URL path the /metrics endpoint is mounted on.
 	// Ignored when Metrics is nil.
 	MetricsPath string
+	// ArqControlPlaneTokenFn returns the current Arq control-plane
+	// bearer token (R083), or empty string when control-plane auth
+	// is disabled. The closure is invoked once per authenticated
+	// request so token-file rotation takes effect on the next call
+	// without restarting the daemon. nil is equivalent to a function
+	// that always returns "" — the standalone-mode default.
+	ArqControlPlaneTokenFn func() string
 }
 
 // Server is the Arq Signals HTTP API server.
@@ -77,7 +84,9 @@ func NewServer(addr string, readTimeout, writeTimeout time.Duration, apiToken st
 
 	// Wrap with middleware: recovery -> logging -> token auth.
 	tokenLimiter := newTokenRateLimiter()
-	handler := recoveryMiddleware(loggingMiddleware(tokenAuthMiddleware(apiToken, tokenLimiter)(mux)))
+	handler := recoveryMiddleware(loggingMiddleware(
+		tokenAuthMiddleware(apiToken, deps.ArqControlPlaneTokenFn, tokenLimiter)(mux),
+	))
 
 	return &Server{
 		httpServer: &http.Server{
@@ -245,7 +254,7 @@ func handleCollectNow(deps *Deps) http.HandlerFunc {
 			}
 			if err := json.Unmarshal(body, &req); err != nil {
 				safety.AuditLog("collect_now_rejected",
-					"actor", "local_operator",
+					"actor", actorFromCtx(r.Context()),
 					"error", "invalid_json",
 				)
 				writeJSON(w, http.StatusBadRequest, map[string]any{
@@ -259,7 +268,7 @@ func handleCollectNow(deps *Deps) http.HandlerFunc {
 			if req.RequestID != nil {
 				if !requestIDPattern.MatchString(*req.RequestID) {
 					safety.AuditLog("collect_now_rejected",
-						"actor", "local_operator",
+						"actor", actorFromCtx(r.Context()),
 						"error", "invalid_request_id",
 					)
 					writeJSON(w, http.StatusBadRequest, map[string]any{
@@ -274,7 +283,7 @@ func handleCollectNow(deps *Deps) http.HandlerFunc {
 			if req.Reason != nil {
 				if !reasonPattern.MatchString(*req.Reason) {
 					safety.AuditLog("collect_now_rejected",
-						"actor", "local_operator",
+						"actor", actorFromCtx(r.Context()),
 						"request_id", requestID,
 						"error", "invalid_reason",
 					)
@@ -290,7 +299,7 @@ func handleCollectNow(deps *Deps) http.HandlerFunc {
 			if req.Targets != nil {
 				if len(*req.Targets) == 0 {
 					safety.AuditLog("collect_now_rejected",
-						"actor", "local_operator",
+						"actor", actorFromCtx(r.Context()),
 						"request_id", requestID,
 						"error", "empty_targets_array",
 					)
@@ -333,7 +342,7 @@ func handleCollectNow(deps *Deps) http.HandlerFunc {
 
 				if len(rejected) > 0 {
 					rejectedAttrs := []any{
-						"actor", "local_operator",
+						"actor", actorFromCtx(r.Context()),
 						"requested_targets", *req.Targets,
 						"accepted_targets", accepted,
 						"rejected_targets", rejected,
@@ -374,7 +383,7 @@ func handleCollectNow(deps *Deps) http.HandlerFunc {
 		// local_operator until Phase 3 introduces a separate
 		// arq_control_plane token (R082).
 		requestedAttrs := []any{
-			"actor", "local_operator",
+			"actor", actorFromCtx(r.Context()),
 			"request_id", requestID,
 			"requested_targets", requestedTargetsAuditValue(targetFilter, allEnabled),
 			"accepted_targets", responseTargets,
@@ -387,10 +396,11 @@ func handleCollectNow(deps *Deps) http.HandlerFunc {
 		queued := deps.Collector.CollectNow(collector.CollectRequest{
 			Targets:   targetFilter,
 			RequestID: requestID,
+			Actor:     actorFromCtx(r.Context()),
 		})
 		if !queued {
 			safety.AuditLog("collect_now_dropped",
-				"actor", "local_operator",
+				"actor", actorFromCtx(r.Context()),
 				"request_id", requestID,
 				"reason_category", "previous_request_pending",
 			)
@@ -430,16 +440,20 @@ func handleExport(deps *Deps) http.HandlerFunc {
 			Until: r.URL.Query().Get("until"),
 		}
 
+		actor := actorFromCtx(r.Context())
+
 		if tid := r.URL.Query().Get("target_id"); tid != "" {
 			id, err := strconv.ParseInt(tid, 10, 64)
 			if err != nil {
 				safety.AuditLog("export_requested",
+					"actor", actor,
 					"source_ip", remoteIP(r),
 					"target_id", tid,
 					"since", opts.Since,
 					"until", opts.Until,
 				)
 				safety.AuditLog("export_completed",
+					"actor", actor,
 					"status", "failed",
 					"duration_ms", time.Since(start).Milliseconds(),
 					"size_bytes", 0,
@@ -454,6 +468,7 @@ func handleExport(deps *Deps) http.HandlerFunc {
 		}
 
 		safety.AuditLog("export_requested",
+			"actor", actor,
 			"source_ip", remoteIP(r),
 			"target_id", opts.TargetID,
 			"since", opts.Since,
@@ -468,6 +483,7 @@ func handleExport(deps *Deps) http.HandlerFunc {
 		if err := deps.Exporter.WriteTo(&buf, opts); err != nil {
 			slog.Error("export failed", "err", err)
 			safety.AuditLog("export_completed",
+				"actor", actor,
 				"status", "failed",
 				"duration_ms", time.Since(start).Milliseconds(),
 				"size_bytes", 0,
@@ -486,6 +502,7 @@ func handleExport(deps *Deps) http.HandlerFunc {
 		if _, err := w.Write(buf.Bytes()); err != nil {
 			slog.Error("export write failed", "err", err)
 			safety.AuditLog("export_completed",
+				"actor", actor,
 				"status", "failed",
 				"duration_ms", time.Since(start).Milliseconds(),
 				"size_bytes", buf.Len(),
@@ -496,6 +513,7 @@ func handleExport(deps *Deps) http.HandlerFunc {
 			return
 		}
 		safety.AuditLog("export_completed",
+			"actor", actor,
 			"status", "success",
 			"duration_ms", time.Since(start).Milliseconds(),
 			"size_bytes", buf.Len(),
@@ -611,9 +629,45 @@ func loggingMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// tokenAuthMiddleware checks for a valid Bearer token on all requests except /health.
-// It also rate-limits invalid token attempts per remote IP.
-func tokenAuthMiddleware(token string, limiter *tokenRateLimiter) func(http.Handler) http.Handler {
+// Audit `actor` values (R078 / R083). Stable wire constants.
+const (
+	ActorLocalOperator   = "local_operator"
+	ActorArqControlPlane = "arq_control_plane"
+)
+
+// ctxKey is an unexported type so external packages can never set or
+// read context values for the api package's keys.
+type ctxKey int
+
+const ctxKeyActor ctxKey = iota
+
+// actorFromCtx returns the audit `actor` value attached to the
+// request context by tokenAuthMiddleware. Defaults to local_operator
+// when no value is present (e.g. test code that bypasses the
+// middleware) — never returns the more privileged
+// arq_control_plane value by default.
+func actorFromCtx(ctx context.Context) string {
+	if v, ok := ctx.Value(ctxKeyActor).(string); ok && v != "" {
+		return v
+	}
+	return ActorLocalOperator
+}
+
+// tokenAuthMiddleware checks for a valid Bearer token on all requests
+// except /health.
+//
+// R083: in addition to the local API token, the supplied bearer is
+// compared (in constant time) to the Arq control-plane token when
+// `controlPlaneTokenFn` is non-nil and returns a non-empty value.
+// The matched token determines the audit `actor` attached to the
+// request context — never inferred from request shape. The
+// control-plane token closure is invoked per request so file-based
+// rotation takes effect on the next call without a restart.
+//
+// In standalone mode, controlPlaneTokenFn is either nil or returns
+// empty; only the local API token is consulted, and a request that
+// would have matched the control-plane token simply gets a 401.
+func tokenAuthMiddleware(apiToken string, controlPlaneTokenFn func() string, limiter *tokenRateLimiter) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Skip auth for health endpoint (loopback health checks).
@@ -641,8 +695,22 @@ func tokenAuthMiddleware(token string, limiter *tokenRateLimiter) func(http.Hand
 				return
 			}
 
-			provided := auth[len(prefix):]
-			if subtle.ConstantTimeCompare([]byte(provided), []byte(token)) != 1 {
+			provided := []byte(auth[len(prefix):])
+
+			// Compare against api.token first.
+			actor := ""
+			if subtle.ConstantTimeCompare(provided, []byte(apiToken)) == 1 {
+				actor = ActorLocalOperator
+			} else if controlPlaneTokenFn != nil {
+				// Fall through to the control-plane token. The closure
+				// is the per-request file/env re-read.
+				cpt := controlPlaneTokenFn()
+				if cpt != "" && subtle.ConstantTimeCompare(provided, []byte(cpt)) == 1 {
+					actor = ActorArqControlPlane
+				}
+			}
+
+			if actor == "" {
 				limiter.recordFailure(ip)
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusUnauthorized)
@@ -652,6 +720,11 @@ func tokenAuthMiddleware(token string, limiter *tokenRateLimiter) func(http.Hand
 
 			// Successful authentication clears any prior failure count for this IP.
 			limiter.recordSuccess(ip)
+
+			// Propagate the resolved actor into the request context so
+			// downstream handlers can attach it to audit events without
+			// re-running the auth check.
+			r = r.WithContext(context.WithValue(r.Context(), ctxKeyActor, actor))
 			next.ServeHTTP(w, r)
 		})
 	}
