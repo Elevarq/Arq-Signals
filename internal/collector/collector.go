@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"math/rand"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 
 	"github.com/elevarq/arq-signals/internal/config"
 	"github.com/elevarq/arq-signals/internal/db"
+	"github.com/elevarq/arq-signals/internal/metrics"
 	"github.com/elevarq/arq-signals/internal/pgqueries"
 	"github.com/elevarq/arq-signals/internal/safety"
 )
@@ -37,6 +39,7 @@ type Collector struct {
 	queryTimeout         time.Duration
 	allowUnsafeRole        bool
 	highSensitivityEnabled bool
+	metrics                *metrics.Registry
 	bypassedChecks         []string
 	bypassedChecksMu     sync.Mutex
 	pools                map[string]*pgxpool.Pool
@@ -129,6 +132,15 @@ func (c *Collector) GetAllowUnsafeRole() bool {
 func WithHighSensitivityCollectors(enabled bool) CollectorOption {
 	return func(c *Collector) {
 		c.highSensitivityEnabled = enabled
+	}
+}
+
+// WithMetrics attaches a Prometheus registry so collection cycle, per-
+// collector outcome, and sqlite persistence counters get updated. Pass
+// nil (the default) to disable metric recording.
+func WithMetrics(m *metrics.Registry) CollectorOption {
+	return func(c *Collector) {
+		c.metrics = m
 	}
 }
 
@@ -249,12 +261,24 @@ func (c *Collector) collectTarget(ctx context.Context, tgt config.TargetConfig, 
 	safety.AuditLog("collection_started", "target", tgt.Name)
 	defer func() {
 		success, failed, skipped := 0, 0, 0
+		failedByReason := map[string]int{}
+		skippedByReason := map[string]int{}
 		for _, r := range runs {
 			switch r.Status {
 			case "skipped":
 				skipped++
+				reason := r.Reason
+				if reason == "" {
+					reason = "unknown"
+				}
+				skippedByReason[reason]++
 			case "failed":
 				failed++
+				reason := r.Reason
+				if reason == "" {
+					reason = "execution_error"
+				}
+				failedByReason[reason]++
 			default:
 				success++
 			}
@@ -266,16 +290,24 @@ func (c *Collector) collectTarget(ctx context.Context, tgt config.TargetConfig, 
 		case failed > 0:
 			status = "partial"
 		}
+		duration := time.Since(cycleStart)
 		safety.AuditLog("collection_completed",
 			"target", tgt.Name,
 			"snapshot_id", snapID,
 			"status", status,
-			"duration_ms", time.Since(cycleStart).Milliseconds(),
+			"duration_ms", duration.Milliseconds(),
 			"collectors_total", len(runs),
 			"collectors_success", success,
 			"collectors_failed", failed,
 			"collectors_skipped", skipped,
 		)
+		c.metrics.ObserveCollection(tgt.Name, status, duration.Seconds())
+		c.metrics.AddCollectorOutcomes(tgt.Name, success, failedByReason, skippedByReason)
+		if status == "failed" {
+			c.metrics.ObserveCollectionFailure(tgt.Name, classifyCollectionFailure(err))
+		} else {
+			c.metrics.SetLastSuccessfulCollection(tgt.Name, float64(time.Now().Unix()))
+		}
 	}()
 
 	pool, err := c.getPool(ctx, tgt)
@@ -541,8 +573,9 @@ func (c *Collector) collectTarget(ctx context.Context, tgt config.TargetConfig, 
 	// Step 5: Persist snapshot + runs + results atomically (R077). A
 	// failure here rolls everything back so an export never sees a
 	// snapshot whose query runs are missing or vice versa.
-	if err := c.db.InsertCollectionAtomic(snap, runs, results); err != nil {
-		return fmt.Errorf("persist collection cycle for %s: %w", tgt.Name, err)
+	if dbErr := c.db.InsertCollectionAtomic(snap, runs, results); dbErr != nil {
+		c.metrics.IncSQLitePersistenceFailure()
+		return fmt.Errorf("persist collection cycle for %s: %w", tgt.Name, dbErr)
 	}
 
 	slog.Info("snapshot collected", "target", tgt.Name, "id", snap.ID, "size", snap.SizeBytes,
@@ -621,6 +654,27 @@ func (c *Collector) cleanup() {
 		slog.Error("query runs cleanup failed", "err", err)
 	} else if deletedRuns > 0 {
 		slog.Info("query runs cleanup complete", "deleted", deletedRuns, "cutoff", cutoff)
+	}
+}
+
+// classifyCollectionFailure maps a collectTarget hard-error into the
+// bounded reason enum used by the metrics labels. Keeps cardinality
+// fixed (R079) and avoids leaking raw error text into metric output.
+func classifyCollectionFailure(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := strings.ToLower(err.Error())
+	switch {
+	case strings.HasPrefix(msg, "connect "):
+		return "connect_error"
+	case strings.Contains(msg, "safety validation failed") ||
+		strings.Contains(msg, "collection blocked"):
+		return "safety_check"
+	case strings.Contains(msg, "persist collection cycle"):
+		return "persistence"
+	default:
+		return "internal"
 	}
 }
 

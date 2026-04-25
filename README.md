@@ -225,6 +225,16 @@ For a full discussion of the role posture — including what additional
 access (if any) the high-sensitivity collector pack needs and how to
 audit the role — see [`docs/postgres-role.md`](docs/postgres-role.md).
 
+### Optional: Prometheus metrics
+
+Arq Signals can expose an opt-in `/metrics` endpoint with operational
+counters and gauges (collection outcomes, export outcomes, sqlite
+persistence health, high-sensitivity gate state). The endpoint never
+publishes collected PostgreSQL data. Off by default; enable with
+`signals.metrics_enabled: true`. See
+[`docs/prometheus.md`](docs/prometheus.md) for the metric set, scrape
+configuration, and security guidance.
+
 ## Using Arq Signals
 
 ### Trigger a collection

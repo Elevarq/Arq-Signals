@@ -22,17 +22,19 @@ type Config struct {
 }
 
 type SignalsConfig struct {
-	PollInterval                    time.Duration `yaml:"-"`
-	PollIntervalS                   string        `yaml:"poll_interval"` // e.g. "5m"
-	RetentionDays                   int           `yaml:"retention_days"`
-	LogLevel                        string        `yaml:"log_level"`
-	LogJSON                         bool          `yaml:"log_json"`
-	MaxConcurrentTargets            int           `yaml:"max_concurrent_targets"`
-	TargetTimeout                   time.Duration `yaml:"-"`
-	TargetTimeoutS                  string        `yaml:"target_timeout"`
-	QueryTimeout                    time.Duration `yaml:"-"`
-	QueryTimeoutS                   string        `yaml:"query_timeout"`
+	PollInterval                     time.Duration `yaml:"-"`
+	PollIntervalS                    string        `yaml:"poll_interval"` // e.g. "5m"
+	RetentionDays                    int           `yaml:"retention_days"`
+	LogLevel                         string        `yaml:"log_level"`
+	LogJSON                          bool          `yaml:"log_json"`
+	MaxConcurrentTargets             int           `yaml:"max_concurrent_targets"`
+	TargetTimeout                    time.Duration `yaml:"-"`
+	TargetTimeoutS                   string        `yaml:"target_timeout"`
+	QueryTimeout                     time.Duration `yaml:"-"`
+	QueryTimeoutS                    string        `yaml:"query_timeout"`
 	HighSensitivityCollectorsEnabled bool          `yaml:"high_sensitivity_collectors_enabled"`
+	MetricsEnabled                   bool          `yaml:"metrics_enabled"`
+	MetricsPath                      string        `yaml:"metrics_path"`
 }
 
 type TargetConfig struct {
@@ -131,6 +133,8 @@ func DefaultConfig() Config {
 			TargetTimeoutS:       "60s",
 			QueryTimeout:         10 * time.Second,
 			QueryTimeoutS:        "10s",
+			MetricsEnabled:       false,
+			MetricsPath:          "/metrics",
 		},
 		API: APIConfig{
 			ListenAddr:    "127.0.0.1:8081",
@@ -271,6 +275,14 @@ func applyEnvOverrides(cfg *Config) error {
 	} else if ok {
 		cfg.Signals.HighSensitivityCollectorsEnabled = b
 	}
+	if b, ok, err := parseEnvBool("ARQ_SIGNALS_METRICS_ENABLED"); err != nil {
+		return err
+	} else if ok {
+		cfg.Signals.MetricsEnabled = b
+	}
+	if v := os.Getenv("ARQ_SIGNALS_METRICS_PATH"); v != "" {
+		cfg.Signals.MetricsPath = v
+	}
 	// File takes precedence over the raw env var when both are set —
 	// matches the _FILE convention used by the official postgres image.
 	// A missing or unreadable file is a hard error so a deployment
@@ -344,6 +356,18 @@ func ValidateStrict(cfg Config) (warnings []string, err error) {
 	}
 	if cfg.Signals.RetentionDays < 0 {
 		hard = append(hard, "signals.retention_days must be >= 0")
+	}
+
+	if cfg.Signals.MetricsEnabled {
+		path := cfg.Signals.MetricsPath
+		switch {
+		case !strings.HasPrefix(path, "/"):
+			hard = append(hard, fmt.Sprintf("signals.metrics_path %q must start with /", path))
+		case path == "/health":
+			hard = append(hard, "signals.metrics_path must not be /health (reserved for liveness probes)")
+		case path == "/status" || path == "/collect/now" || path == "/export":
+			hard = append(hard, fmt.Sprintf("signals.metrics_path %q collides with an existing API path", path))
+		}
 	}
 
 	seen := make(map[string]int, len(cfg.Targets))
