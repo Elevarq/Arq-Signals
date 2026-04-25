@@ -290,6 +290,126 @@ signals:
 	}
 }
 
+// ---------------------------------------------------------------------------
+// R076: Strict configuration validation
+// ---------------------------------------------------------------------------
+
+// TestValidateStrictAcceptsValidConfig verifies the happy path: a complete,
+// healthy config returns no error and no warnings.
+// Traces: ARQ-SIGNALS-R076
+func TestValidateStrictAcceptsValidConfig(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Targets = []config.TargetConfig{
+		{
+			Name:    "primary",
+			Host:    "db.example.com",
+			Port:    5432,
+			DBName:  "app",
+			User:    "monitor",
+			SSLMode: "verify-full",
+			Enabled: true,
+		},
+	}
+	warnings, err := config.ValidateStrict(cfg)
+	if err != nil {
+		t.Fatalf("ValidateStrict returned hard error: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Errorf("ValidateStrict returned warnings on healthy config: %v", warnings)
+	}
+}
+
+// TestValidateStrictAggregatesHardErrors verifies that ValidateStrict reports
+// every hard error in a single message rather than failing on the first.
+// Traces: ARQ-SIGNALS-R076
+func TestValidateStrictAggregatesHardErrors(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Database.Path = ""
+	cfg.API.ListenAddr = ""
+	cfg.Targets = []config.TargetConfig{
+		{Name: "a", Host: "h", DBName: "d", User: ""}, // missing user
+		{Name: "a", Host: "", DBName: "d", User: "u"}, // duplicate name + missing host
+	}
+	_, err := config.ValidateStrict(cfg)
+	if err == nil {
+		t.Fatal("expected hard error")
+	}
+	msg := err.Error()
+	for _, want := range []string{
+		"database.path is empty",
+		"api.listen_addr is empty",
+		"user is required",
+		"host is required",
+		"duplicate name",
+	} {
+		if !contains(msg, want) {
+			t.Errorf("expected error to contain %q, got:\n%s", want, msg)
+		}
+	}
+}
+
+// TestValidateStrictRejectsMultipleSecretSources verifies that more than one
+// of password_file/password_env/pgpass_file is a hard error.
+// Traces: ARQ-SIGNALS-R076
+func TestValidateStrictRejectsMultipleSecretSources(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Targets = []config.TargetConfig{
+		{
+			Name:         "p",
+			Host:         "h",
+			DBName:       "d",
+			User:         "u",
+			SSLMode:      "verify-full",
+			PasswordFile: "/run/secrets/pw",
+			PasswordEnv:  "PG_PASS",
+			Enabled:      true,
+		},
+	}
+	_, err := config.ValidateStrict(cfg)
+	if err == nil || !contains(err.Error(), "specify at most one") {
+		t.Fatalf("expected secret-source conflict, got %v", err)
+	}
+}
+
+// TestLoadRejectsMalformedIntEnv verifies that a non-integer in
+// ARQ_SIGNALS_RETENTION_DAYS aborts Load instead of being silently dropped.
+// Traces: ARQ-SIGNALS-R076
+func TestLoadRejectsMalformedIntEnv(t *testing.T) {
+	origDir, _ := os.Getwd()
+	dir := t.TempDir()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	t.Setenv("ARQ_SIGNALS_RETENTION_DAYS", "thirty")
+	_, err := config.Load("")
+	if err == nil {
+		t.Fatal("expected error for malformed integer env var")
+	}
+	if !contains(err.Error(), "ARQ_SIGNALS_RETENTION_DAYS") {
+		t.Errorf("error should name the offending env var, got: %v", err)
+	}
+}
+
+// TestLoadRejectsMalformedBoolEnv verifies that a non-boolean in
+// ARQ_ALLOW_INSECURE_PG_TLS aborts Load. Previously "yes" silently became
+// false.
+// Traces: ARQ-SIGNALS-R076
+func TestLoadRejectsMalformedBoolEnv(t *testing.T) {
+	origDir, _ := os.Getwd()
+	dir := t.TempDir()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	t.Setenv("ARQ_ALLOW_INSECURE_PG_TLS", "yes")
+	_, err := config.Load("")
+	if err == nil {
+		t.Fatal("expected error for malformed boolean env var")
+	}
+	if !contains(err.Error(), "ARQ_ALLOW_INSECURE_PG_TLS") {
+		t.Errorf("error should name the offending env var, got: %v", err)
+	}
+}
+
 // TestTargetEnabledDefaultsToTrue verifies R076: a target without an explicit
 // `enabled:` field is treated as enabled. The previous zero-value behaviour
 // silently disabled targets in any minimal config.
