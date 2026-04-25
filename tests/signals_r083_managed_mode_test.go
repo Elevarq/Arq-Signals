@@ -69,9 +69,16 @@ func writeTokenFile(t *testing.T, contents string) string {
 	return path
 }
 
-// strongToken returns a 32+ char ASCII token suitable for the
-// control-plane slot. Distinct from testAPIToken.
-const testCPToken = "control-plane-token-1234567890abcdef"
+// testCPToken / rotatedCPToken are runtime-constructed low-entropy
+// strings used as fake control-plane bearer tokens in this file.
+// They satisfy R083's 32-char minimum without embedding a
+// high-entropy alphanumeric literal in source — that pattern trips
+// the gitleaks scanner's generic-api-key rule even when the value
+// is obviously test-only.
+var (
+	testCPToken    = strings.Repeat("b", 32)
+	rotatedCPToken = strings.Repeat("c", 32)
+)
 
 // ---------------------------------------------------------------------------
 // R083: ValidateStrict + ValidateModeBTokens
@@ -115,7 +122,7 @@ func TestR083TokensMustDiffer(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Signals.Mode = config.ModeArqManaged
 	cfg.Signals.ArqControlPlaneTokenFile = "/dev/null" // any non-empty source
-	apiToken := "abcdefghijklmnopqrstuvwxyz012345" // 32 chars
+	apiToken := strings.Repeat("a", 32)                 // 32 chars, low entropy
 	err := config.ValidateModeBTokens(cfg, apiToken, apiToken)
 	if err == nil {
 		t.Fatal("expected error when arq token equals api token")
@@ -131,8 +138,8 @@ func TestR083TokenLengthFloor(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Signals.Mode = config.ModeArqManaged
 	cfg.Signals.ArqControlPlaneTokenFile = "/dev/null"
-	apiToken := "api-token-aaaaaaaaaaaaaaaaaaaaaaaaaa"
-	short := strings.Repeat("a", config.MinArqControlPlaneTokenLength-1)
+	apiToken := strings.Repeat("a", 32)
+	short := strings.Repeat("b", config.MinArqControlPlaneTokenLength-1)
 	err := config.ValidateModeBTokens(cfg, apiToken, short)
 	if err == nil {
 		t.Fatal("expected error for short control-plane token")
@@ -232,7 +239,7 @@ func TestR083UnknownTokenStill401(t *testing.T) {
 	handler := makeR083Handler(t, config.ModeArqManaged, tokenFile)
 
 	req := httptest.NewRequest("POST", "/collect/now", nil)
-	req.Header.Set("Authorization", "Bearer something-else-entirely-not-known-32chars")
+	req.Header.Set("Authorization", "Bearer "+strings.Repeat("z", 32))
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 	if w.Code != http.StatusUnauthorized {
@@ -256,8 +263,7 @@ func TestR083TokenRotation(t *testing.T) {
 	}
 
 	// Rotate: replace the file's contents with a new token.
-	const rotated = "rotated-control-plane-token-abcdef-32"
-	if err := os.WriteFile(tokenFile, []byte(rotated+"\n"), 0o600); err != nil {
+	if err := os.WriteFile(tokenFile, []byte(rotatedCPToken+"\n"), 0o600); err != nil {
 		t.Fatalf("rotate: %v", err)
 	}
 
@@ -272,7 +278,7 @@ func TestR083TokenRotation(t *testing.T) {
 
 	// New token authenticates without restart.
 	req = httptest.NewRequest("POST", "/collect/now", nil)
-	req.Header.Set("Authorization", "Bearer "+rotated)
+	req.Header.Set("Authorization", "Bearer "+rotatedCPToken)
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 	if w.Code != http.StatusAccepted {
