@@ -422,6 +422,45 @@ func (d *DB) InsertQueryRunBatch(runs []QueryRun, results []QueryResult) error {
 	}
 	defer tx.Rollback()
 
+	if err := insertRunsAndResults(tx, runs, results); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// InsertCollectionAtomic persists one collection cycle's snapshot, query
+// runs, and query results inside a single transaction (R077). If any step
+// fails the entire cycle is rolled back so partial state — e.g. a snapshot
+// without its query runs, or runs without their result payloads — never
+// becomes observable to readers or exports.
+func (d *DB) InsertCollectionAtomic(snapshot Snapshot, runs []QueryRun, results []QueryResult) error {
+	tx, err := d.sql.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(
+		"INSERT INTO snapshots (id, target_id, collected_at, pg_version, payload, size_bytes) VALUES (?, ?, ?, ?, ?, ?)",
+		snapshot.ID, snapshot.TargetID, snapshot.CollectedAt, snapshot.PGVersion, string(snapshot.Payload), snapshot.SizeBytes,
+	); err != nil {
+		return fmt.Errorf("insert snapshot: %w", err)
+	}
+
+	if err := insertRunsAndResults(tx, runs, results); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+// insertRunsAndResults shares the prepared-statement loop between the
+// legacy batch insert and the atomic full-cycle insert.
+func insertRunsAndResults(tx *sql.Tx, runs []QueryRun, results []QueryResult) error {
+	if len(runs) == 0 && len(results) == 0 {
+		return nil
+	}
+
 	runStmt, err := tx.Prepare(`INSERT INTO query_runs
 		(id, target_id, snapshot_id, query_id, collected_at, pg_version, duration_ms, row_count, error, created_at, status, reason)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
@@ -439,7 +478,6 @@ func (d *DB) InsertQueryRunBatch(runs []QueryRun, results []QueryResult) error {
 	for _, r := range runs {
 		status := r.Status
 		if status == "" {
-			// Backwards-compatible default: derive from Error.
 			if r.Error != "" {
 				status = "failed"
 			} else {
@@ -461,7 +499,7 @@ func (d *DB) InsertQueryRunBatch(runs []QueryRun, results []QueryResult) error {
 		}
 	}
 
-	return tx.Commit()
+	return nil
 }
 
 func (d *DB) GetAllQueryRuns(since, until string) ([]QueryRun, error) {

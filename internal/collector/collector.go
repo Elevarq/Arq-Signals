@@ -487,19 +487,11 @@ func (c *Collector) collectTarget(ctx context.Context, tgt config.TargetConfig, 
 		})
 	}
 
-	// Step 5: Batch insert query runs + results.
-	if len(runs) > 0 {
-		if err := c.db.InsertQueryRunBatch(runs, results); err != nil {
-			slog.Error("insert query runs failed", "target", tgt.Name, "err", err)
-		}
-	}
-
-	// Step 6: Still populate monolithic snapshot for backward compatibility.
+	// Build the legacy monolithic snapshot.
 	payload, err := MarshalPayload(data)
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)
 	}
-
 	snap := db.Snapshot{
 		ID:          snapID,
 		TargetID:    targetID,
@@ -509,8 +501,11 @@ func (c *Collector) collectTarget(ctx context.Context, tgt config.TargetConfig, 
 		SizeBytes:   len(payload),
 	}
 
-	if err := c.db.InsertSnapshot(snap); err != nil {
-		return fmt.Errorf("insert snapshot: %w", err)
+	// Step 5: Persist snapshot + runs + results atomically (R077). A
+	// failure here rolls everything back so an export never sees a
+	// snapshot whose query runs are missing or vice versa.
+	if err := c.db.InsertCollectionAtomic(snap, runs, results); err != nil {
+		return fmt.Errorf("persist collection cycle for %s: %w", tgt.Name, err)
 	}
 
 	slog.Info("snapshot collected", "target", tgt.Name, "id", snap.ID, "size", snap.SizeBytes,
