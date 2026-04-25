@@ -149,6 +149,7 @@ func handleCollectNow(deps *Deps) http.HandlerFunc {
 
 func handleExport(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
 		opts := export.Options{
 			Since: r.URL.Query().Get("since"),
 			Until: r.URL.Query().Get("until"),
@@ -157,11 +158,30 @@ func handleExport(deps *Deps) http.HandlerFunc {
 		if tid := r.URL.Query().Get("target_id"); tid != "" {
 			id, err := strconv.ParseInt(tid, 10, 64)
 			if err != nil {
+				safety.AuditLog("export_requested",
+					"source_ip", remoteIP(r),
+					"target_id", tid,
+					"since", opts.Since,
+					"until", opts.Until,
+				)
+				safety.AuditLog("export_completed",
+					"status", "failed",
+					"duration_ms", time.Since(start).Milliseconds(),
+					"size_bytes", 0,
+					"error_category", "invalid_target_id",
+				)
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid target_id"})
 				return
 			}
 			opts.TargetID = id
 		}
+
+		safety.AuditLog("export_requested",
+			"source_ip", remoteIP(r),
+			"target_id", opts.TargetID,
+			"since", opts.Since,
+			"until", opts.Until,
+		)
 
 		// Buffer the ZIP fully before writing any response headers. If the
 		// export fails midway we want to return a 500 with an error body, not
@@ -170,6 +190,12 @@ func handleExport(deps *Deps) http.HandlerFunc {
 		var buf bytes.Buffer
 		if err := deps.Exporter.WriteTo(&buf, opts); err != nil {
 			slog.Error("export failed", "err", err)
+			safety.AuditLog("export_completed",
+				"status", "failed",
+				"duration_ms", time.Since(start).Milliseconds(),
+				"size_bytes", 0,
+				"error_category", "builder_error",
+			)
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "export failed"})
 			return
 		}
@@ -180,7 +206,19 @@ func handleExport(deps *Deps) http.HandlerFunc {
 		w.Header().Set("Content-Length", strconv.Itoa(buf.Len()))
 		if _, err := w.Write(buf.Bytes()); err != nil {
 			slog.Error("export write failed", "err", err)
+			safety.AuditLog("export_completed",
+				"status", "failed",
+				"duration_ms", time.Since(start).Milliseconds(),
+				"size_bytes", buf.Len(),
+				"error_category", "write_error",
+			)
+			return
 		}
+		safety.AuditLog("export_completed",
+			"status", "success",
+			"duration_ms", time.Since(start).Milliseconds(),
+			"size_bytes", buf.Len(),
+		)
 	}
 }
 

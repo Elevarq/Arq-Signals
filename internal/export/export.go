@@ -20,13 +20,19 @@ type Options struct {
 	Until    string
 }
 
+// CollectorStatusSchemaVersion is the schema version embedded in
+// collector_status.json. Bumped independently of the snapshot schema so
+// auditors can pin tooling to a specific status format.
+const CollectorStatusSchemaVersion = "1"
+
 // Builder creates a ZIP export of collected data.
 type Builder struct {
-	store             *db.DB
-	instanceID        string
-	unsafeMode        bool
-	unsafeReasonsFunc func() []string
-	collectorStatus   *collector.CollectorStatusFile
+	store                            *db.DB
+	instanceID                       string
+	unsafeMode                       bool
+	unsafeReasonsFunc                func() []string
+	collectorStatus                  *collector.CollectorStatusFile
+	highSensitivityCollectorsEnabled bool
 }
 
 // NewBuilder creates a new export Builder.
@@ -46,12 +52,20 @@ func (b *Builder) SetUnsafeMode(reasonsFunc func() []string) {
 	b.unsafeReasonsFunc = reasonsFunc
 }
 
+// SetHighSensitivityCollectorsEnabled records the daemon-wide R075 gate
+// state so it can be embedded in export metadata. Auditors use this to
+// determine whether application-authored SQL definition text could be
+// present in the export without parsing the body.
+func (b *Builder) SetHighSensitivityCollectorsEnabled(enabled bool) {
+	b.highSensitivityCollectorsEnabled = enabled
+}
+
 // WriteTo writes the ZIP export to the given writer.
 func (b *Builder) WriteTo(w io.Writer, opts Options) error {
 	zw := zip.NewWriter(w)
 	defer zw.Close()
 
-	if err := b.writeMetadata(zw); err != nil {
+	if err := b.writeMetadata(zw, opts); err != nil {
 		return fmt.Errorf("write metadata.json: %w", err)
 	}
 
@@ -78,19 +92,29 @@ func (b *Builder) WriteTo(w io.Writer, opts Options) error {
 	return nil
 }
 
-func (b *Builder) writeMetadata(zw *zip.Writer) error {
+func (b *Builder) writeMetadata(zw *zip.Writer, opts Options) error {
 	f, err := zw.Create("metadata.json")
 	if err != nil {
 		return err
 	}
 
+	now := time.Now().UTC().Format(time.RFC3339)
 	data := map[string]any{
-		"schema_version":    snapshot.SchemaVersion,
-		"instance_id":       b.instanceID,
-		"collector_version": safety.Version,
-		"collector_commit":  safety.Commit,
-		"collected_at":      time.Now().UTC().Format(time.RFC3339),
-		"unsafe_mode":       b.unsafeMode,
+		"schema_version":                      snapshot.SchemaVersion,
+		"collector_status_schema_version":     CollectorStatusSchemaVersion,
+		"instance_id":                         b.instanceID,
+		"arq_signals_version":                 safety.Version,
+		"collector_version":                   safety.Version, // legacy alias
+		"collector_commit":                    safety.Commit,
+		"generated_at":                        now,
+		"collected_at":                        now, // legacy alias
+		"unsafe_mode":                         b.unsafeMode,
+		"high_sensitivity_collectors_enabled": b.highSensitivityCollectorsEnabled,
+	}
+	if opts.TargetID > 0 {
+		if name, err := b.store.GetTargetName(opts.TargetID); err == nil && name != "" {
+			data["target_name"] = name
+		}
 	}
 	if b.unsafeMode && b.unsafeReasonsFunc != nil {
 		reasons := b.unsafeReasonsFunc()
@@ -118,7 +142,7 @@ func (b *Builder) writeCollectorStatus(zw *zip.Writer, opts Options) error {
 		statuses := collector.BuildStatusFromRuns(runs)
 
 		file := collector.CollectorStatusFile{
-			SchemaVersion: "1",
+			SchemaVersion: CollectorStatusSchemaVersion,
 			TargetName:    targetName,
 			CollectedAt:   time.Now().UTC().Format(time.RFC3339),
 			Collectors:    statuses,
@@ -134,7 +158,7 @@ func (b *Builder) writeCollectorStatus(zw *zip.Writer, opts Options) error {
 	}
 
 	empty := collector.CollectorStatusFile{
-		SchemaVersion: "1",
+		SchemaVersion: CollectorStatusSchemaVersion,
 		CollectedAt:   time.Now().UTC().Format(time.RFC3339),
 		Collectors:    []collector.CollectorStatus{},
 	}

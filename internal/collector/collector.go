@@ -20,6 +20,7 @@ import (
 	"github.com/elevarq/arq-signals/internal/config"
 	"github.com/elevarq/arq-signals/internal/db"
 	"github.com/elevarq/arq-signals/internal/pgqueries"
+	"github.com/elevarq/arq-signals/internal/safety"
 )
 
 // connConfigFunc is the function used to build pgx configs. Overridable for testing.
@@ -239,7 +240,44 @@ func (c *Collector) runCycle(ctx context.Context, forceAll bool) {
 	slog.Info("collection cycle completed", "duration_ms", time.Since(start).Milliseconds(), "targets", len(enabled))
 }
 
-func (c *Collector) collectTarget(ctx context.Context, tgt config.TargetConfig, forceAll bool) error {
+func (c *Collector) collectTarget(ctx context.Context, tgt config.TargetConfig, forceAll bool) (err error) {
+	cycleStart := time.Now()
+	var (
+		snapID string
+		runs   []db.QueryRun
+	)
+	safety.AuditLog("collection_started", "target", tgt.Name)
+	defer func() {
+		success, failed, skipped := 0, 0, 0
+		for _, r := range runs {
+			switch r.Status {
+			case "skipped":
+				skipped++
+			case "failed":
+				failed++
+			default:
+				success++
+			}
+		}
+		status := "success"
+		switch {
+		case err != nil:
+			status = "failed"
+		case failed > 0:
+			status = "partial"
+		}
+		safety.AuditLog("collection_completed",
+			"target", tgt.Name,
+			"snapshot_id", snapID,
+			"status", status,
+			"duration_ms", time.Since(cycleStart).Milliseconds(),
+			"collectors_total", len(runs),
+			"collectors_success", success,
+			"collectors_failed", failed,
+			"collectors_skipped", skipped,
+		)
+	}()
+
 	pool, err := c.getPool(ctx, tgt)
 	if err != nil {
 		return fmt.Errorf("connect %s: %w", tgt.Name, err)
@@ -356,11 +394,10 @@ func (c *Collector) collectTarget(ctx context.Context, tgt config.TargetConfig, 
 	}
 
 	now := time.Now().UTC()
-	snapID := ulid.MustNew(ulid.Timestamp(now), c.entropy).String()
+	snapID = ulid.MustNew(ulid.Timestamp(now), c.entropy).String()
 	collectedAt := now.Format(time.RFC3339)
 
 	data := &SnapshotData{Version: versionStr}
-	var runs []db.QueryRun
 	var results []db.QueryResult
 
 	// Step 4: Execute each query with budget-aware timeout.

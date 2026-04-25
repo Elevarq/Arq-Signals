@@ -48,13 +48,46 @@ func run() error {
 		slog.Warn("config warning", "msg", w)
 	}
 	if err != nil {
+		safety.AuditLog("config_validated",
+			"status", "error",
+			"warnings", len(warnings),
+			"hard_errors", 1,
+		)
 		return err
 	}
+	safety.AuditLog("config_validated",
+		"status", "ok",
+		"warnings", len(warnings),
+		"hard_errors", 0,
+	)
 
 	// Enforce Postgres TLS policy.
 	if err := config.ValidateProdTLS(cfg); err != nil {
+		safety.AuditLog("config_validated",
+			"status", "error",
+			"phase", "tls_policy",
+		)
 		return fmt.Errorf("TLS policy: %w", err)
 	}
+
+	// Audit posture: high-sensitivity gate state and target enable/disable
+	// counts. Per R078 these record *what* ran, not *which credentials* —
+	// only counts and booleans, no host/user/password leakage.
+	enabled, disabled := 0, 0
+	for _, t := range cfg.Targets {
+		if t.Enabled {
+			enabled++
+		} else {
+			disabled++
+		}
+	}
+	safety.AuditLog("high_sensitivity_collectors",
+		"enabled", cfg.Signals.HighSensitivityCollectorsEnabled,
+	)
+	safety.AuditLog("targets_loaded",
+		"enabled", enabled,
+		"disabled", disabled,
+	)
 
 	slog.Info("arq-signals starting",
 		"version", safety.Version,
@@ -103,6 +136,7 @@ func run() error {
 
 	// Initialize exporter (no license gating).
 	exporter := export.NewBuilder(store, instanceID)
+	exporter.SetHighSensitivityCollectorsEnabled(cfg.Signals.HighSensitivityCollectorsEnabled)
 	if cfg.AllowUnsafeRole {
 		// Pass a function that returns the actual bypassed checks at export time,
 		// so metadata reflects the specific role attributes that were bypassed.

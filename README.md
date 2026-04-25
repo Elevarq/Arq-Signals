@@ -221,6 +221,10 @@ mode (`ARQ_SIGNALS_ALLOW_UNSAFE_ROLE=true`). This behavior is
 intentional — it prevents accidental execution with elevated
 privileges in production.
 
+For a full discussion of the role posture — including what additional
+access (if any) the high-sensitivity collector pack needs and how to
+audit the role — see [`docs/postgres-role.md`](docs/postgres-role.md).
+
 ## Using Arq Signals
 
 ### Trigger a collection
