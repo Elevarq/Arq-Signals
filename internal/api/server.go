@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -163,11 +164,115 @@ func handleStatus(deps *Deps) http.HandlerFunc {
 	}
 }
 
+// handleCollectNow accepts an optional JSON body (R082 Phase 1) that
+// narrows the cycle to a subset of configured targets. The historical
+// behaviour — empty body, no body, or `Content-Length: 0` — keeps
+// collecting every enabled target and is byte-for-byte unchanged.
+//
+// New behaviour when the body is present and parses to JSON:
+//
+//	{"targets": ["a", "b"]}
+//
+// Validation rules (R082):
+//   - `targets` field absent → collect all enabled targets.
+//   - `targets` empty array → 400 Bad Request (client bug; never
+//     silently treated as "collect nothing" or "collect all").
+//   - Any name not in `signals.yaml` → 400 with reason
+//     `unknown_target`.
+//   - Any name on a target with `enabled: false` → 400 with reason
+//     `disabled_target`.
+//   - Duplicate names are deduplicated silently.
+//
+// On success the 202 response carries `accepted_targets` so the
+// caller can confirm which targets were scheduled. The 400 response
+// carries `accepted_targets` (the names that *would* have been
+// collected) plus `rejected_targets` with per-name reasons. The
+// cycle is not triggered when any target was rejected.
 func handleCollectNow(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		deps.Collector.CollectNow()
-		writeJSON(w, http.StatusAccepted, map[string]string{
-			"status": "collection triggered",
+		body, _ := io.ReadAll(r.Body)
+		body = bytes.TrimSpace(body)
+
+		var targetFilter []string
+		var allEnabled []string
+		for _, t := range deps.Targets {
+			if t.Enabled {
+				allEnabled = append(allEnabled, t.Name)
+			}
+		}
+
+		if len(body) > 0 {
+			var req struct {
+				Targets *[]string `json:"targets,omitempty"`
+			}
+			if err := json.Unmarshal(body, &req); err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]any{
+					"error": "invalid JSON body",
+				})
+				return
+			}
+
+			if req.Targets != nil {
+				if len(*req.Targets) == 0 {
+					writeJSON(w, http.StatusBadRequest, map[string]any{
+						"error": "targets must be a non-empty array; omit the field to collect all enabled targets",
+					})
+					return
+				}
+
+				configured := make(map[string]config.TargetConfig, len(deps.Targets))
+				for _, t := range deps.Targets {
+					configured[t.Name] = t
+				}
+
+				type rejection struct {
+					Name   string `json:"name"`
+					Reason string `json:"reason"`
+				}
+				seen := make(map[string]bool, len(*req.Targets))
+				accepted := make([]string, 0, len(*req.Targets))
+				var rejected []rejection
+
+				for _, name := range *req.Targets {
+					if seen[name] {
+						continue
+					}
+					seen[name] = true
+
+					cfg, ok := configured[name]
+					if !ok {
+						rejected = append(rejected, rejection{Name: name, Reason: "unknown_target"})
+						continue
+					}
+					if !cfg.Enabled {
+						rejected = append(rejected, rejection{Name: name, Reason: "disabled_target"})
+						continue
+					}
+					accepted = append(accepted, name)
+				}
+
+				if len(rejected) > 0 {
+					writeJSON(w, http.StatusBadRequest, map[string]any{
+						"error":            "one or more targets cannot be collected",
+						"accepted_targets": accepted,
+						"rejected_targets": rejected,
+					})
+					return
+				}
+
+				targetFilter = accepted
+			}
+		}
+
+		responseTargets := targetFilter
+		if responseTargets == nil {
+			responseTargets = allEnabled
+		}
+
+		deps.Collector.CollectNow(targetFilter)
+		writeJSON(w, http.StatusAccepted, map[string]any{
+			"status":           "collection triggered",
+			"accepted_targets": responseTargets,
 		})
 	}
 }

@@ -44,7 +44,7 @@ type Collector struct {
 	bypassedChecksMu     sync.Mutex
 	pools                map[string]*pgxpool.Pool
 	poolsMu              sync.Mutex
-	collectNowCh         chan struct{}
+	collectNowCh         chan []string
 	entropy              io.Reader
 	running              sync.Mutex
 }
@@ -76,7 +76,7 @@ func New(store *db.DB, targets []config.TargetConfig, interval time.Duration, re
 		targetTimeout:        60 * time.Second,
 		queryTimeout:         10 * time.Second,
 		pools:                make(map[string]*pgxpool.Pool),
-		collectNowCh:         make(chan struct{}, 1),
+		collectNowCh:         make(chan []string, 1),
 		entropy:              &lockedRandReader{r: rand.New(rand.NewSource(time.Now().UnixNano()))},
 	}
 	for _, opt := range opts {
@@ -167,8 +167,9 @@ func (c *Collector) Run(ctx context.Context) {
 	ticker := time.NewTicker(c.interval)
 	defer ticker.Stop()
 
-	// Initial collection — force all queries as a baseline.
-	c.runCycle(ctx, true)
+	// Initial collection — force all queries as a baseline. nil filter
+	// means "collect every enabled target".
+	c.runCycle(ctx, true, nil)
 
 	for {
 		select {
@@ -177,20 +178,30 @@ func (c *Collector) Run(ctx context.Context) {
 			c.closePools()
 			return
 		case <-ticker.C:
-			c.runCycle(ctx, false)
-		case <-c.collectNowCh:
-			slog.Info("on-demand collection triggered")
-			c.runCycle(ctx, true)
+			c.runCycle(ctx, false, nil)
+		case targetFilter := <-c.collectNowCh:
+			slog.Info("on-demand collection triggered", "targets", len(targetFilter))
+			c.runCycle(ctx, true, targetFilter)
 		}
 	}
 }
 
 // CollectNow triggers an immediate collection cycle (non-blocking).
-func (c *Collector) CollectNow() {
+//
+// targetFilter is the R082 Phase 1 narrowing knob: when non-nil, only
+// the configured targets whose names appear in the filter are
+// collected this cycle. The caller is responsible for validating the
+// filter against the configured target set — collector.runCycle
+// trusts the slice and silently skips any name it doesn't recognise.
+//
+// nil filter (the historical signature) means "collect every enabled
+// target", preserving Mode A semantics.
+func (c *Collector) CollectNow(targetFilter []string) {
 	select {
-	case c.collectNowCh <- struct{}{}:
+	case c.collectNowCh <- targetFilter:
 	default:
-		// Already pending.
+		// Already pending — drop the new request. R032 (no overlapping
+		// cycles) keeps this simple; the in-flight filter wins.
 	}
 }
 
@@ -203,8 +214,13 @@ func (c *Collector) LastCollected() string {
 }
 
 // runCycle runs a collection cycle with overlap protection.
-// If forceAll is true, all eligible queries are executed regardless of cadence.
-func (c *Collector) runCycle(ctx context.Context, forceAll bool) {
+//
+// If forceAll is true, all eligible queries are executed regardless
+// of cadence. If targetFilter is non-nil, only configured targets
+// whose names appear in the filter are collected — R082 Phase 1
+// narrowing. nil filter means "collect every enabled target"
+// (interval-driven cycles always pass nil here).
+func (c *Collector) runCycle(ctx context.Context, forceAll bool, targetFilter []string) {
 	if !c.running.TryLock() {
 		slog.Warn("collection cycle skipped — previous cycle still running")
 		return
@@ -213,12 +229,25 @@ func (c *Collector) runCycle(ctx context.Context, forceAll bool) {
 
 	start := time.Now()
 
-	// Build list of enabled targets.
+	// Build list of enabled targets, narrowed by the optional filter.
+	var filterSet map[string]struct{}
+	if targetFilter != nil {
+		filterSet = make(map[string]struct{}, len(targetFilter))
+		for _, name := range targetFilter {
+			filterSet[name] = struct{}{}
+		}
+	}
 	var enabled []config.TargetConfig
 	for _, tgt := range c.targets {
-		if tgt.Enabled {
-			enabled = append(enabled, tgt)
+		if !tgt.Enabled {
+			continue
 		}
+		if filterSet != nil {
+			if _, ok := filterSet[tgt.Name]; !ok {
+				continue
+			}
+		}
+		enabled = append(enabled, tgt)
 	}
 
 	// Worker pool: bounded channel semaphore + WaitGroup.
