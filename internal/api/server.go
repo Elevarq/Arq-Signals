@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
@@ -162,13 +163,23 @@ func handleExport(deps *Deps) http.HandlerFunc {
 			opts.TargetID = id
 		}
 
+		// Buffer the ZIP fully before writing any response headers. If the
+		// export fails midway we want to return a 500 with an error body, not
+		// a 200 with a truncated/invalid ZIP that the client cannot
+		// distinguish from success.
+		var buf bytes.Buffer
+		if err := deps.Exporter.WriteTo(&buf, opts); err != nil {
+			slog.Error("export failed", "err", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "export failed"})
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/zip")
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=arq-export-%s.zip",
 			time.Now().UTC().Format("20060102-150405")))
-
-		if err := deps.Exporter.WriteTo(w, opts); err != nil {
-			slog.Error("export failed", "err", err)
-			// Headers already sent, can't change status.
+		w.Header().Set("Content-Length", strconv.Itoa(buf.Len()))
+		if _, err := w.Write(buf.Bytes()); err != nil {
+			slog.Error("export write failed", "err", err)
 		}
 	}
 }

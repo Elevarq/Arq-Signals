@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -59,6 +60,10 @@ func statusCmd() *cobra.Command {
 			}
 			defer resp.Body.Close()
 
+			if err := checkSuccess(resp, "status"); err != nil {
+				return err
+			}
+
 			var data map[string]any
 			if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
 				return fmt.Errorf("decode response: %w", err)
@@ -87,8 +92,14 @@ func collectCmd() *cobra.Command {
 			}
 			defer resp.Body.Close()
 
+			if err := checkSuccess(resp, "collect"); err != nil {
+				return err
+			}
+
 			var result map[string]any
-			json.NewDecoder(resp.Body).Decode(&result)
+			if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+				return fmt.Errorf("decode response: %w", err)
+			}
 			out, _ := json.MarshalIndent(result, "", "  ")
 			fmt.Println(string(out))
 			return nil
@@ -110,9 +121,8 @@ func exportCmd() *cobra.Command {
 			}
 			defer resp.Body.Close()
 
-			if resp.StatusCode != http.StatusOK {
-				body, _ := io.ReadAll(resp.Body)
-				return fmt.Errorf("export failed: HTTP %d: %s", resp.StatusCode, body)
+			if err := checkSuccess(resp, "export"); err != nil {
+				return err
 			}
 
 			if output == "" {
@@ -137,6 +147,21 @@ func exportCmd() *cobra.Command {
 
 	cmd.Flags().StringVarP(&output, "output", "o", "", "output file path (default: arq-export-<timestamp>.zip)")
 	return cmd
+}
+
+// checkSuccess returns an error if resp's status is not 2xx, including the
+// response body in the error message so the operator sees what the server
+// actually said. Callers must still close resp.Body.
+func checkSuccess(resp *http.Response, op string) error {
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
+	}
+	body, _ := io.ReadAll(resp.Body)
+	body = bytes.TrimSpace(body)
+	if len(body) == 0 {
+		return fmt.Errorf("%s failed: HTTP %d %s", op, resp.StatusCode, http.StatusText(resp.StatusCode))
+	}
+	return fmt.Errorf("%s failed: HTTP %d %s: %s", op, resp.StatusCode, http.StatusText(resp.StatusCode), body)
 }
 
 func apiRequestWithTimeout(method, path string, body io.Reader, timeout time.Duration) (*http.Response, error) {

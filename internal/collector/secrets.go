@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -27,17 +28,31 @@ func BuildConnConfig(tgt config.TargetConfig) (*pgx.ConnConfig, error) {
 		return nil, fmt.Errorf("target %s: host is required", tgt.Name)
 	}
 
-	connStr := fmt.Sprintf("host=%s port=%d dbname=%s user=%s",
-		host, port, tgt.DBName, tgt.User)
-
+	// Build a postgres:// URL so net/url handles all escaping. The previous
+	// fmt.Sprintf("host=%s ... dbname=%s ...") form interpolated user-provided
+	// fields without quoting; a dbname containing a space (or worse, an embedded
+	// `key=value` pair) would have been parsed as additional connection options
+	// rather than as a literal value.
+	u := &url.URL{
+		Scheme: "postgres",
+		Host:   net.JoinHostPort(host, strconv.Itoa(port)),
+	}
+	if tgt.User != "" {
+		u.User = url.User(tgt.User)
+	}
+	if tgt.DBName != "" {
+		u.Path = "/" + tgt.DBName
+	}
+	q := u.Query()
 	if tgt.SSLMode != "" {
-		connStr += fmt.Sprintf(" sslmode=%s", tgt.SSLMode)
+		q.Set("sslmode", tgt.SSLMode)
 	}
 	if tgt.SSLRootCertFile != "" {
-		connStr += fmt.Sprintf(" sslrootcert=%s", tgt.SSLRootCertFile)
+		q.Set("sslrootcert", tgt.SSLRootCertFile)
 	}
+	u.RawQuery = q.Encode()
 
-	cfg, err := pgx.ParseConfig(connStr)
+	cfg, err := pgx.ParseConfig(u.String())
 	if err != nil {
 		return nil, fmt.Errorf("target %s: parse config: %w", tgt.Name, err)
 	}

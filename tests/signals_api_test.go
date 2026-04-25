@@ -164,6 +164,54 @@ func TestExportEndpoint(t *testing.T) {
 	}
 }
 
+// TestExportEndpointReturnsErrorOnFailure verifies that when the export
+// builder fails midway, the handler returns a JSON 500 with no ZIP headers
+// — not a 200 OK with a truncated/invalid ZIP body. This guards against
+// silent data corruption on the consumer side.
+// Traces: ARQ-SIGNALS-R011 / TC-SIG-018
+func TestExportEndpointReturnsErrorOnFailure(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "broken-export.db")
+	store, err := db.Open(dbPath, false)
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	if err := store.Migrate(); err != nil {
+		store.Close()
+		t.Fatalf("Migrate: %v", err)
+	}
+	if _, err := store.EnsureInstanceID(); err != nil {
+		store.Close()
+		t.Fatalf("EnsureInstanceID: %v", err)
+	}
+
+	exporter := export.NewBuilder(store, "test-id")
+	coll := collector.New(store, nil, 1*time.Hour, 30)
+	deps := &api.Deps{DB: store, Collector: coll, Exporter: exporter}
+	srv := api.NewServer("127.0.0.1:0", 10*time.Second, 10*time.Second, testAPIToken, deps)
+	handler := srv.Handler()
+
+	// Close the store so the exporter's queries fail — simulates a mid-export
+	// I/O error. Buffering means the failure must surface as a 500, not a 200
+	// with a corrupt ZIP.
+	store.Close()
+
+	req := httptest.NewRequest("GET", "/export", nil)
+	req.Header.Set("Authorization", "Bearer "+testAPIToken)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 on export failure, got %d", w.Code)
+	}
+	if ct := w.Header().Get("Content-Type"); ct == "application/zip" {
+		t.Errorf("response should not advertise Content-Type=application/zip on failure, got %q", ct)
+	}
+	if cd := w.Header().Get("Content-Disposition"); cd != "" {
+		t.Errorf("response should not have Content-Disposition on failure, got %q", cd)
+	}
+}
+
 // TestExportEndpointRequiresAuth verifies GET /export without token returns 401.
 // Traces: ARQ-SIGNALS-R011 / TC-SIG-018
 func TestExportEndpointRequiresAuth(t *testing.T) {
