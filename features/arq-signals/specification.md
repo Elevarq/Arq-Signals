@@ -986,7 +986,9 @@ Runtime considerations (not startup errors):
   compromise of either token is a separate incident class. The
   audit field reflects reality: whoever sent the request had the
   control-plane token. R024's per-IP rate limiter on invalid
-  attempts continues to apply.
+  attempts continues to apply. A compromise-response runbook is
+  tracked as a separate docs follow-up; R083 itself only commits
+  to making rotation possible.
 - **Replay protection:** out of scope for R083. The bearer token
   is the only auth surface. Higher-strength auth (mTLS, signed
   JWTs, request-bound nonces) is Phase 4+ work.
@@ -1028,6 +1030,16 @@ Runtime considerations (not startup errors):
   spec.
 - **No token-rotation API.** The file-based pattern already
   supports zero-downtime rotation.
+- **No token-rotation audit event.** The file re-read is silent
+  by design; the audit record on the next request after rotation
+  is sufficient observability. Operators that need explicit
+  rotation visibility can wrap the rotation in a custom event
+  outside Arq Signal.
+- **No auth-failure audit events.** Existing 401 responses + R024
+  per-IP rate limiter on invalid attempts are unchanged. Adding
+  explicit `auth_failed` audit records would be noisy under bot
+  scanning and require their own rate-limiting; this is deferred
+  to a future audit-completeness pass.
 
 ## Invariants
 
