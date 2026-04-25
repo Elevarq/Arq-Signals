@@ -44,9 +44,18 @@ type Collector struct {
 	bypassedChecksMu     sync.Mutex
 	pools                map[string]*pgxpool.Pool
 	poolsMu              sync.Mutex
-	collectNowCh         chan []string
+	collectNowCh         chan CollectRequest
 	entropy              io.Reader
 	running              sync.Mutex
+}
+
+// CollectRequest is the on-demand cycle payload carried over
+// collectNowCh. RequestID is the R082 Phase 2 correlation identifier
+// that propagates through to per-target audit events; an empty value
+// means no correlation id was supplied.
+type CollectRequest struct {
+	Targets   []string // nil = collect every enabled target
+	RequestID string   // empty = no correlation id
 }
 
 // lockedRandReader serializes access to a math/rand.Rand source. The
@@ -76,7 +85,7 @@ func New(store *db.DB, targets []config.TargetConfig, interval time.Duration, re
 		targetTimeout:        60 * time.Second,
 		queryTimeout:         10 * time.Second,
 		pools:                make(map[string]*pgxpool.Pool),
-		collectNowCh:         make(chan []string, 1),
+		collectNowCh:         make(chan CollectRequest, 1),
 		entropy:              &lockedRandReader{r: rand.New(rand.NewSource(time.Now().UnixNano()))},
 	}
 	for _, opt := range opts {
@@ -169,7 +178,7 @@ func (c *Collector) Run(ctx context.Context) {
 
 	// Initial collection — force all queries as a baseline. nil filter
 	// means "collect every enabled target".
-	c.runCycle(ctx, true, nil)
+	c.runCycle(ctx, true, CollectRequest{})
 
 	for {
 		select {
@@ -178,30 +187,31 @@ func (c *Collector) Run(ctx context.Context) {
 			c.closePools()
 			return
 		case <-ticker.C:
-			c.runCycle(ctx, false, nil)
-		case targetFilter := <-c.collectNowCh:
-			slog.Info("on-demand collection triggered", "targets", len(targetFilter))
-			c.runCycle(ctx, true, targetFilter)
+			c.runCycle(ctx, false, CollectRequest{})
+		case req := <-c.collectNowCh:
+			slog.Info("on-demand collection triggered", "targets", len(req.Targets), "request_id", req.RequestID)
+			c.runCycle(ctx, true, req)
 		}
 	}
 }
 
 // CollectNow triggers an immediate collection cycle (non-blocking).
+// Returns true when the request was queued, false when the buffer was
+// already full and the new request was dropped — R082 Phase 2 lets
+// the caller emit a `collect_now_dropped` audit event so the
+// correlation id stays in the audit trail even when the cycle never
+// fires.
 //
-// targetFilter is the R082 Phase 1 narrowing knob: when non-nil, only
-// the configured targets whose names appear in the filter are
-// collected this cycle. The caller is responsible for validating the
-// filter against the configured target set — collector.runCycle
-// trusts the slice and silently skips any name it doesn't recognise.
-//
-// nil filter (the historical signature) means "collect every enabled
-// target", preserving Mode A semantics.
-func (c *Collector) CollectNow(targetFilter []string) {
+// req.Targets nil means "collect every enabled target", preserving
+// Mode A semantics. req.RequestID propagates to per-target
+// `collection_started` / `collection_completed` audit records.
+func (c *Collector) CollectNow(req CollectRequest) bool {
 	select {
-	case c.collectNowCh <- targetFilter:
+	case c.collectNowCh <- req:
+		return true
 	default:
-		// Already pending — drop the new request. R032 (no overlapping
-		// cycles) keeps this simple; the in-flight filter wins.
+		// Already pending — caller decides how to log the drop.
+		return false
 	}
 }
 
@@ -216,11 +226,14 @@ func (c *Collector) LastCollected() string {
 // runCycle runs a collection cycle with overlap protection.
 //
 // If forceAll is true, all eligible queries are executed regardless
-// of cadence. If targetFilter is non-nil, only configured targets
+// of cadence. If req.Targets is non-nil, only configured targets
 // whose names appear in the filter are collected — R082 Phase 1
 // narrowing. nil filter means "collect every enabled target"
-// (interval-driven cycles always pass nil here).
-func (c *Collector) runCycle(ctx context.Context, forceAll bool, targetFilter []string) {
+// (interval-driven cycles always pass a zero CollectRequest here).
+//
+// req.RequestID, when non-empty, is propagated to each per-target
+// audit event (R082 Phase 2 correlation).
+func (c *Collector) runCycle(ctx context.Context, forceAll bool, req CollectRequest) {
 	if !c.running.TryLock() {
 		slog.Warn("collection cycle skipped — previous cycle still running")
 		return
@@ -231,9 +244,9 @@ func (c *Collector) runCycle(ctx context.Context, forceAll bool, targetFilter []
 
 	// Build list of enabled targets, narrowed by the optional filter.
 	var filterSet map[string]struct{}
-	if targetFilter != nil {
-		filterSet = make(map[string]struct{}, len(targetFilter))
-		for _, name := range targetFilter {
+	if req.Targets != nil {
+		filterSet = make(map[string]struct{}, len(req.Targets))
+		for _, name := range req.Targets {
 			filterSet[name] = struct{}{}
 		}
 	}
@@ -268,7 +281,7 @@ func (c *Collector) runCycle(ctx context.Context, forceAll bool, targetFilter []
 				defer cancel()
 			}
 
-			if err := c.collectTarget(tgtCtx, tgt, forceAll); err != nil {
+			if err := c.collectTarget(tgtCtx, tgt, forceAll, req.RequestID); err != nil {
 				slog.Error("collection failed", "target", tgt.Name, "err", err)
 				c.db.InsertEvent("collect_error", fmt.Sprintf("target=%s err=%v", tgt.Name, err))
 			}
@@ -281,13 +294,17 @@ func (c *Collector) runCycle(ctx context.Context, forceAll bool, targetFilter []
 	slog.Info("collection cycle completed", "duration_ms", time.Since(start).Milliseconds(), "targets", len(enabled))
 }
 
-func (c *Collector) collectTarget(ctx context.Context, tgt config.TargetConfig, forceAll bool) (err error) {
+func (c *Collector) collectTarget(ctx context.Context, tgt config.TargetConfig, forceAll bool, requestID string) (err error) {
 	cycleStart := time.Now()
 	var (
 		snapID string
 		runs   []db.QueryRun
 	)
-	safety.AuditLog("collection_started", "target", tgt.Name)
+	startedAttrs := []any{"target", tgt.Name}
+	if requestID != "" {
+		startedAttrs = append(startedAttrs, "request_id", requestID)
+	}
+	safety.AuditLog("collection_started", startedAttrs...)
 	defer func() {
 		success, failed, skipped := 0, 0, 0
 		failedByReason := map[string]int{}
@@ -320,7 +337,7 @@ func (c *Collector) collectTarget(ctx context.Context, tgt config.TargetConfig, 
 			status = "partial"
 		}
 		duration := time.Since(cycleStart)
-		safety.AuditLog("collection_completed",
+		completedAttrs := []any{
 			"target", tgt.Name,
 			"snapshot_id", snapID,
 			"status", status,
@@ -329,7 +346,11 @@ func (c *Collector) collectTarget(ctx context.Context, tgt config.TargetConfig, 
 			"collectors_success", success,
 			"collectors_failed", failed,
 			"collectors_skipped", skipped,
-		)
+		}
+		if requestID != "" {
+			completedAttrs = append(completedAttrs, "request_id", requestID)
+		}
+		safety.AuditLog("collection_completed", completedAttrs...)
 		c.metrics.ObserveCollection(tgt.Name, status, duration.Seconds())
 		c.metrics.AddCollectorOutcomes(tgt.Name, success, failedByReason, skippedByReason)
 		if status == "failed" {

@@ -63,8 +63,8 @@ func TestOverlapPreventionCollectNow(t *testing.T) {
 
 	// CollectNow uses a buffered channel of size 1. Calling it twice
 	// rapidly should not block — the second send is silently dropped.
-	coll.CollectNow(nil)
-	coll.CollectNow(nil)
+	coll.CollectNow(collector.CollectRequest{})
+	coll.CollectNow(collector.CollectRequest{})
 	// If this test hangs, the overlap protection is broken.
 }
 
