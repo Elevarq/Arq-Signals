@@ -24,6 +24,20 @@ var auditAttrDenyPrefixes = []string{
 	"query_result",
 }
 
+// auditAttrAllowList is a small, hand-curated set of audit-attribute
+// keys that contain a denylist substring (e.g. "token") but only ever
+// carry boolean / metadata values about the configured value, never
+// the secret value itself. Without this allow-list the substring
+// match in auditAttrDenyPrefixes would silently filter out useful
+// diagnostics like `arq_control_plane_token_configured=true` from
+// the R083 startup `mode_configured` audit event.
+//
+// Entries here must be reviewed: each key may carry only metadata
+// (boolean, count, fingerprint), never the underlying secret value.
+var auditAttrAllowList = map[string]bool{
+	"arq_control_plane_token_configured": true,
+}
+
 // AuditLog emits a structured info-level audit event. The first attr pair
 // must be the event name as a key/value, e.g.
 //
@@ -61,6 +75,9 @@ func filterAuditAttrs(attrs []any) []any {
 
 func isDeniedAuditKey(key string) bool {
 	lower := strings.ToLower(key)
+	if auditAttrAllowList[lower] {
+		return false
+	}
 	for _, p := range auditAttrDenyPrefixes {
 		if strings.Contains(lower, p) {
 			return true
