@@ -631,6 +631,189 @@ underlying views or unsupported syntax), the system shall emit a
 emits `reason=config_disabled` for high-sensitivity collectors that
 the operator did not opt into.
 
+### Control-plane boundary
+
+**ARQ-SIGNALS-R082**: The system shall operate in one of two modes
+— **standalone OSS** (Mode A) and **Arq-managed** (Mode B) — and
+shall preserve a clear trust boundary between locally-controlled
+configuration and externally-driven orchestration.
+
+This rule is **DESIGN-ONLY**. It defines the contract; runtime
+behavior lands in phased follow-up work (see "Future implementation
+plan" below). No code or operator-visible behavior changes from
+R082's introduction.
+
+#### Modes
+
+**Mode A — Standalone OSS.** The default. Targets are configured in
+`signals.yaml`; collection is driven locally on the operator's poll
+interval. No external service can request collection or narrow the
+target set. This is the mode every open-source user runs.
+
+**Mode B — Arq-managed.** Optional. When enabled by local config,
+Arq Signal accepts authenticated collection requests from the
+commercial Arq control plane. The control plane may **narrow** the
+configured target set to a subset (the contracted/licensed
+databases) and trigger collection cycles. The target set in
+`signals.yaml` remains the authoritative ceiling — Arq cannot
+expand it.
+
+#### Trust boundary
+
+- Arq Signal runs inside the customer environment. Default behavior
+  has no outbound data egress (R007 / R008 / R009 remain in force).
+- Arq may also run inside the customer environment depending on
+  the deployment topology; the design does not assume Arq is remote.
+- Mode B requests are **authenticated** (Phase 1: bearer token,
+  consistent with R011). Stronger auth (mTLS, signed JWTs) is a
+  future extension.
+- Arq Signal **does not enforce commercial licensing as a security
+  boundary**. The collector is open source; an operator who removes
+  the license check can do so trivially. The commercial value lives
+  in Arq's analysis, recommendations, and reporting — not in
+  obscured collector behavior.
+
+#### Target selection
+
+- The list of targets in `signals.yaml` is the **authoritative
+  ceiling**. Mode B can only narrow this set, never expand it.
+- Mode B requests reference targets by their configured `name`.
+  Unknown names are rejected with an explicit reason; an unknown
+  name in the request does not cause silent partial success.
+- Targets marked `enabled: false` are not collected even when Mode
+  B explicitly requests them. Future spec extensions may relax this
+  behind an explicit `allow_disabled` flag; R082 does not.
+
+#### Proposed API shape
+
+```
+POST /collect/now
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "targets": ["prod-main", "prod-reporting"],
+  "reason": "scheduled_arq_cycle",
+  "request_id": "01J5K6T3HW2A4DGCXV5Z6P0M3R"
+}
+```
+
+| Field | Type | Required | Behaviour |
+|---|---|---|---|
+| `targets` | string[] | optional | Subset of configured target names. When **absent**, behaviour matches Mode A — collect all enabled targets. When **present and non-empty**, the cycle's effective set is `targets ∩ enabled-configured-targets`. An **empty array** (`"targets": []`) is treated as a client bug and rejected with `400 Bad Request`; collectors are never silently dropped. Backward compatible: empty body / no body retains existing semantics. |
+| `reason` | string (≤ 64 chars) | optional | Free-text label surfaced in audit events. Not validated; never logged into a label set with cardinality concerns. |
+| `request_id` | string matching `^[A-Za-z0-9_-]+$` (≤ 32 chars) | optional | Correlation identifier propagated through to per-target audit events. Restricted to ASCII alphanumerics, `_`, and `-` so audit-log greppability stays predictable. When absent, Arq Signal generates a ULID (which already satisfies the regex). |
+
+Response:
+
+```
+202 Accepted
+Content-Type: application/json
+
+{
+  "request_id": "01J5K…",
+  "accepted_targets": ["prod-main", "prod-reporting"],
+  "rejected_targets": []
+}
+```
+
+When `targets` includes any name that is not present in
+`signals.yaml`, or any target marked `enabled: false`, or when
+`targets` is an empty array, the request returns `400 Bad Request`
+with the rejected names + reason. The cycle is **not triggered**;
+disabled targets are never silently dropped from the accepted set.
+
+#### Audit requirements
+
+Every `/collect/now` request emits an extended
+`audit_event=collect_now_requested` slog record carrying:
+
+- `request_id` — propagated through to per-target
+  `collection_started` / `collection_completed` events for end-to-end
+  correlation.
+- `requested_targets` — count + list as supplied in the request
+  body (or "all enabled" when no `targets` field was given).
+- `accepted_targets` — count + list actually scheduled.
+- `rejected_targets` — count + list with a `reason` enum:
+  `unknown_target`, `disabled_target`.
+- `reason` — the request's `reason` field, when supplied.
+- `actor` — `local_operator` for every Phase 1 / Phase 2 request,
+  regardless of request shape. The `arq_control_plane` actor value
+  is reserved for Phase 3, where a separate
+  `signals.arq_control_plane_token` distinguishes the control-plane
+  identity from the operator identity. **Until Phase 3 ships, the
+  presence of a `request_id` does not change the actor field** —
+  inferring control-plane identity from request shape would let any
+  caller forge the audit log.
+
+The R078 audit-attribute denylist remains in force. Secrets, SQL
+payloads, and PG row data are never present in audit attributes
+regardless of request shape.
+
+#### Security requirements
+
+- Bearer token on every Mode B request (same token mechanism as
+  R011). Stronger auth (mTLS, signed JWTs, separate operator vs
+  control-plane tokens) is future work.
+- The request can **only narrow** the configured target set. Any
+  target name not present in `signals.yaml` is rejected.
+- High-sensitivity collectors (R075) remain gated by local config.
+  Mode B cannot enable them.
+- Existing per-IP rate limiter for invalid auth (R024) applies
+  unchanged. **No new rate limiting is introduced by R082.** The
+  collector's existing serialization (R032 — `running.TryLock` in
+  `runCycle`) already prevents overlapping cycles: a flood of
+  accepted Mode B requests collapses into one in-flight cycle plus
+  log-level "skipped — previous cycle still running" entries. A
+  dedicated rate limit on accepted requests can be added in
+  Phase 4+ if abuse patterns appear.
+
+#### Licensing model
+
+| Layer | Owner |
+|---|---|
+| License validation | Arq |
+| Contracted target list / customer entitlement | Arq |
+| Analysis, scoring, recommendations | Arq |
+| Enterprise workflow + reporting | Arq |
+| Local extraction | Arq Signal |
+| Local API + this endpoint | Arq Signal |
+| Local snapshot export | Arq Signal |
+| Operational metrics (R079) | Arq Signal |
+| Safe collector execution | Arq Signal |
+
+Arq Signal does **not** validate licenses, check entitlements, or
+gate collection on a commercial signal. Operators running Mode A
+get the full collector capability — that is by design and matches
+the BSD-3-Clause license posture (R009). The commercial value
+remains in Arq's analysis layer, not in obscured collector behaviour.
+
+#### Non-goals (R082)
+
+- No license enforcement inside Arq Signal.
+- No remote SaaS control plane assumption (Mode B works equally
+  well for in-cluster Arq).
+- No collector profile selection — that is a separate future spec.
+- No per-collector export view — R080 remains separate.
+- No status callback channel from Arq Signal back to Arq.
+  Mode B is fire-and-forget on the request side; Arq retrieves
+  results via the existing `/export` endpoint.
+- No per-`request_id` outcome tracking. R082 propagates the
+  correlation id through audit events but does not expose a way
+  to look up "what happened to request X?" via the API.
+  Outcome-by-request_id retrieval is Phase 4+ work.
+- No new rate limiting on accepted requests beyond the existing
+  collector serialization (see Security requirements above).
+
+#### Future implementation plan
+
+| Phase | Scope | Spec status |
+|---|---|---|
+| 1 | `POST /collect/now` accepts optional JSON body with `targets` field. Empty array, unknown names, or disabled names → 400 with rejected list. Backward compatible with empty-body POSTs. Audit `actor` remains `local_operator`. | Implemented from R082 directly. |
+| 2 | `request_id` (regex `^[A-Za-z0-9_-]+$`, ≤32 chars) + `reason` (≤64 chars) fields. Audit-event extension with `requested_targets` / `accepted_targets` / `rejected_targets`. Correlation id propagated through per-target `collection_started` / `collection_completed` events. Audit `actor` still `local_operator`. | Implemented from R082 directly. |
+| 3 | `signals.mode: standalone \| arq_managed` config flag. Separate `signals.arq_control_plane_token` so the operator can distinguish actor identity in audit events. Mode B requires the flag to be set. **First phase in which the audit `actor` field can carry `arq_control_plane`.** | Requires a small new spec rule (R083) to govern the config knobs. |
+| 4 | Collector profiles, entitlement metadata exchange, per-`request_id` outcome lookup endpoint, status callback channel. Optional rate limiting on accepted Mode B requests if real-world abuse patterns appear. | Out of scope for R082. Separate spec. |
+
 ## Invariants
 
 - **INV-SIGNALS-01**: Collector output is passive evidence, not interpretation.
