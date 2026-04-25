@@ -582,6 +582,55 @@ would create unbounded cardinality or reintroduce sensitive content:
 collector / query IDs, database names, host names, user names, file
 paths, raw error message bodies, SQL text.
 
+### Version-aware query catalog
+
+**ARQ-SIGNALS-R081**: The system shall determine the connected
+target's PostgreSQL major version, installed extensions, current
+database, and current user via a single discovery probe at the start
+of each collection cycle, before any catalog filtering. The discovery
+result drives version-specific SQL selection so collectors continue
+to work as PostgreSQL evolves its `pg_stat_*` schema.
+
+The system supports first-class catalogs for PostgreSQL major
+versions **14, 15, 16, 17, and 18**. PostgreSQL 19 is treated as
+**experimental**: the collector falls back to the highest supported
+catalog (PG 18) and logs a warning so operators see the
+experimental status. Major versions below 14 are out of scope.
+
+Per-major catalog files (`internal/pgqueries/catalog_pg14.go`
+through `catalog_pg19.go`) carry **only the SQL that differs from
+the version-agnostic default**. Most collectors share one default
+SQL across all supported majors and need no per-version override.
+This minimises duplication and keeps the SQL diff visible per major.
+
+The following invariants apply to any version-specific SQL override:
+
+- **Stable logical IDs**: a collector's logical ID
+  (`pg_stat_io_v1`, etc.) is the same across all majors. Consumers
+  see one ID; only the SQL underneath changes. There is no
+  `pg_stat_io_v1_pg18` flavour.
+- **Normalized output columns**: when PostgreSQL renames or
+  restructures columns between majors, each version's SQL emits the
+  same canonical column set (the union of pre- and post-rename
+  columns). Columns that don't have a native source on a given
+  major are emitted as `NULL` of the appropriate type.
+- **No new SELECT *** in version-specific overrides. Any SELECT *
+  that exists is a documented R037 dynamic-capture exemption (see
+  `pg_stat_statements_v1`) or a pre-existing cross-version
+  compromise to be tightened in a follow-up.
+- **Safety linter applies equally**: override SQL is lint-checked at
+  registration time exactly like the default registry. Override SQL
+  cannot weaken R002 (DDL/DML rejection) or R013 (read-only
+  enforcement).
+
+When a collector exists in the version-agnostic registry but has no
+SQL that's executable on the connected major (because of removed
+underlying views or unsupported syntax), the system shall emit a
+`status=skipped, reason=version_unsupported` entry in
+`collector_status.json` for that collector, the same way `R075`
+emits `reason=config_disabled` for high-sensitivity collectors that
+the operator did not opt into.
+
 ## Invariants
 
 - **INV-SIGNALS-01**: Collector output is passive evidence, not interpretation.

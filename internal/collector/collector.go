@@ -390,20 +390,32 @@ func (c *Collector) collectTarget(ctx context.Context, tgt config.TargetConfig, 
 		}
 	}
 
-	// Step 1: Get PG version.
-	var versionStr string
-	if err := tx.QueryRow(ctx, "SELECT version()").Scan(&versionStr); err != nil {
-		return fmt.Errorf("query version: %w", err)
+	// Step 1: Discovery (R081). One probe yields the version, major,
+	// installed extensions, current_database, current_user.
+	disc, err := pgqueries.Discover(ctx, tx)
+	if err != nil {
+		return fmt.Errorf("discovery for %s: %w", tgt.Name, err)
 	}
-	pgMajor := parsePGMajorVersion(versionStr)
+	versionStr := disc.ServerVersion
 
-	// Step 2: Detect installed extensions.
-	extensions := detectExtensions(ctx, tx)
+	// PG 19+: experimental — no first-class catalog support yet. Fall
+	// back to the highest supported major (PG 18) catalog so collection
+	// still works against pre-release servers, but log it loudly so the
+	// operator notices.
+	effectiveMajor := disc.MajorVersion
+	if pgqueries.IsExperimentalMajor(effectiveMajor) {
+		slog.Warn("PG major above supported window — falling back to highest supported catalog",
+			"target", tgt.Name,
+			"server_major", disc.MajorVersion,
+			"falling_back_to", pgqueries.MaxSupportedMajor,
+		)
+		effectiveMajor = pgqueries.MaxSupportedMajor
+	}
 
-	// Step 3: Filter eligible queries.
+	// Step 2: Filter eligible queries with version-aware SQL resolution.
 	filterParams := pgqueries.FilterParams{
-		PGMajorVersion:         pgMajor,
-		Extensions:             extensions,
+		PGMajorVersion:         effectiveMajor,
+		Extensions:             disc.Extensions,
 		HighSensitivityEnabled: c.highSensitivityEnabled,
 	}
 	eligible := pgqueries.Filter(filterParams)
