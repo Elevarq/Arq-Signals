@@ -4,3 +4,7 @@ bin/
 *.db-shm
 .env
 test-config.yaml
+
+# Local-only AI assistant instruction files. These belong on the
+# operator's workstation, not in the published repository.
+CLAUDE.md
