@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"math/rand"
 	"sync"
@@ -39,8 +40,24 @@ type Collector struct {
 	pools                map[string]*pgxpool.Pool
 	poolsMu              sync.Mutex
 	collectNowCh         chan struct{}
-	entropy              *rand.Rand
+	entropy              io.Reader
 	running              sync.Mutex
+}
+
+// lockedRandReader serializes access to a math/rand.Rand source. The
+// standard library's *rand.Rand is not safe for concurrent use, but ULID
+// generation runs in parallel per target and per query. Without this wrapper
+// concurrent ulid.MustNew calls race on the underlying state, occasionally
+// producing duplicate IDs.
+type lockedRandReader struct {
+	mu sync.Mutex
+	r  *rand.Rand
+}
+
+func (l *lockedRandReader) Read(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.r.Read(p)
 }
 
 // New creates a new Collector.
@@ -55,7 +72,7 @@ func New(store *db.DB, targets []config.TargetConfig, interval time.Duration, re
 		queryTimeout:         10 * time.Second,
 		pools:                make(map[string]*pgxpool.Pool),
 		collectNowCh:         make(chan struct{}, 1),
-		entropy:              rand.New(rand.NewSource(time.Now().UnixNano())),
+		entropy:              &lockedRandReader{r: rand.New(rand.NewSource(time.Now().UnixNano()))},
 	}
 	for _, opt := range opts {
 		opt(c)

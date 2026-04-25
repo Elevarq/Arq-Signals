@@ -48,6 +48,21 @@ type TargetConfig struct {
 	Enabled         bool   `yaml:"enabled"`
 }
 
+// UnmarshalYAML decodes a TargetConfig with Enabled defaulting to true.
+// Without this, an omitted `enabled:` key would deserialize to the zero
+// value (false), silently disabling targets in configs that don't mention
+// the field. Operators must use explicit `enabled: false` to disable a
+// target.
+func (t *TargetConfig) UnmarshalYAML(value *yaml.Node) error {
+	type rawTarget TargetConfig
+	raw := rawTarget{Enabled: true}
+	if err := value.Decode(&raw); err != nil {
+		return err
+	}
+	*t = TargetConfig(raw)
+	return nil
+}
+
 // SecretType returns the credential source type for display/storage.
 func (t TargetConfig) SecretType() string {
 	switch {

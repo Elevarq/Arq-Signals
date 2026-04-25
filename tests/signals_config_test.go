@@ -290,6 +290,60 @@ signals:
 	}
 }
 
+// TestTargetEnabledDefaultsToTrue verifies R076: a target without an explicit
+// `enabled:` field is treated as enabled. The previous zero-value behaviour
+// silently disabled targets in any minimal config.
+// Traces: ARQ-SIGNALS-R076
+func TestTargetEnabledDefaultsToTrue(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "signals.yaml")
+	content := `
+targets:
+  - name: implicit-on
+    host: db.example.com
+    dbname: app
+    user: monitor
+  - name: explicit-on
+    host: db.example.com
+    dbname: app
+    user: monitor
+    enabled: true
+  - name: explicit-off
+    host: db.example.com
+    dbname: app
+    user: monitor
+    enabled: false
+`
+	if err := os.WriteFile(cfgPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.Targets) != 3 {
+		t.Fatalf("expected 3 targets, got %d", len(cfg.Targets))
+	}
+
+	cases := []struct {
+		name string
+		want bool
+	}{
+		{"implicit-on", true},
+		{"explicit-on", true},
+		{"explicit-off", false},
+	}
+	for i, c := range cases {
+		if cfg.Targets[i].Name != c.name {
+			t.Fatalf("target[%d] name = %q, want %q", i, cfg.Targets[i].Name, c.name)
+		}
+		if cfg.Targets[i].Enabled != c.want {
+			t.Errorf("target %q Enabled = %v, want %v", c.name, cfg.Targets[i].Enabled, c.want)
+		}
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsSubstr(s, substr))
 }
