@@ -85,9 +85,12 @@ func TestPgStatIoDefaultForPG17(t *testing.T) {
 	}
 }
 
-// TestPgStatWalOverrideForPG18 verifies the PG 18 SQL aliases the
-// renamed columns (wal_writes, wal_syncs) back to the canonical schema
-// names (wal_write, wal_sync) so consumers see stable column names.
+// TestPgStatWalOverrideForPG18 verifies the PG 18 SQL preserves the
+// canonical column set even though PG 18 dropped wal_write / wal_sync /
+// wal_write_time / wal_sync_time from the source view entirely. The
+// override emits NULL stubs for those columns so downstream consumers
+// see the same schema across majors; the moved counters are now
+// available via pg_stat_io.
 // Traces: ARQ-SIGNALS-R081
 func TestPgStatWalOverrideForPG18(t *testing.T) {
 	out := pgqueries.Filter(pgqueries.FilterParams{PGMajorVersion: 18})
@@ -95,11 +98,21 @@ func TestPgStatWalOverrideForPG18(t *testing.T) {
 	if q == nil {
 		t.Fatal("pg_stat_wal_v1 missing from PG 18 filter result")
 	}
-	if !strings.Contains(q.SQL, "wal_writes AS wal_write") {
-		t.Errorf("PG 18 SQL must alias wal_writes AS wal_write, got:\n%s", q.SQL)
+	for _, stub := range []string{
+		"NULL::bigint           AS wal_write",
+		"NULL::bigint           AS wal_sync",
+		"NULL::double precision AS wal_write_time",
+		"NULL::double precision AS wal_sync_time",
+	} {
+		if !strings.Contains(q.SQL, stub) {
+			t.Errorf("PG 18 SQL must expose %q for canonical schema, got:\n%s", stub, q.SQL)
+		}
 	}
-	if !strings.Contains(q.SQL, "wal_syncs AS wal_sync") {
-		t.Errorf("PG 18 SQL must alias wal_syncs AS wal_sync, got:\n%s", q.SQL)
+	// PG 18 must still emit the columns the view does keep.
+	for _, kept := range []string{"wal_records", "wal_fpi", "wal_bytes", "wal_buffers_full", "stats_reset"} {
+		if !strings.Contains(q.SQL, kept) {
+			t.Errorf("PG 18 SQL must keep native column %q, got:\n%s", kept, q.SQL)
+		}
 	}
 }
 

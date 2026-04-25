@@ -41,20 +41,30 @@ func init() {
 	FROM pg_stat_io
 	ORDER BY backend_type, object, context`)
 
-	// pg_stat_wal: PG 18 renamed wal_write -> wal_writes and
-	// wal_sync -> wal_syncs (the timing columns wal_write_time /
-	// wal_sync_time were retained). The override aliases the new
-	// names back to the canonical schema so downstream consumers see
-	// the original column names regardless of server major.
+	// pg_stat_wal: PG 18 trimmed the view aggressively. The write and
+	// sync counters (wal_write, wal_sync, wal_write_time, wal_sync_time)
+	// were removed entirely — that data is no longer available from
+	// pg_stat_wal. PG 18's pg_stat_wal exposes only:
+	//   wal_records, wal_fpi, wal_bytes, wal_buffers_full, stats_reset
+	//
+	// The equivalent write/sync visibility is now in pg_stat_io
+	// per-backend-type rows. Consumers that need it should read
+	// pg_stat_io_v1's `writes` / `write_time` / `fsyncs` /
+	// `fsync_time` columns and aggregate.
+	//
+	// Canonical schema is preserved by emitting NULL stubs for the
+	// removed columns — same approach as op_bytes on pg_stat_io_v1.
+	// Downstream consumers see a stable column list across majors;
+	// only the populated subset varies.
 	RegisterOverride(18, "pg_stat_wal_v1", `SELECT
 		wal_records,
 		wal_fpi,
 		wal_bytes,
 		wal_buffers_full,
-		wal_writes AS wal_write,
-		wal_syncs AS wal_sync,
-		wal_write_time,
-		wal_sync_time,
+		NULL::bigint           AS wal_write,
+		NULL::bigint           AS wal_sync,
+		NULL::double precision AS wal_write_time,
+		NULL::double precision AS wal_sync_time,
 		stats_reset
 	FROM pg_stat_wal`)
 }
