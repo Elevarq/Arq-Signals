@@ -6,6 +6,13 @@
 - **STRUCTURAL**: Tests verifying code structure (source scanning, file inspection)
 - **INTEGRATION**: Tests requiring live PostgreSQL (build-tag guarded)
 
+Coverage Status values:
+
+- **COVERED**: rule is implemented and has at least one passing test.
+- **PLANNED**: rule is design-only at this point; implementation
+  and tests land in a phased follow-up. The Test ID column lists
+  the test cases the design anticipates.
+
 | Rule ID | Rule Summary | Test ID(s) | Coverage Status | Evidence Type | Notes |
 |---------|-------------|------------|-----------------|---------------|-------|
 | R001 | PostgreSQL connection with supplied params | TC-SIG-001 | COVERED | BEHAVIORAL | Connection config validates host/port/dbname/user, application_name, default port |
@@ -88,3 +95,4 @@
 | R078 | Audit logging and export metadata | TC-SIG-065 | COVERED | BEHAVIORAL | `audit_event` slog records for startup config validation, per-target collection cycles, and export requests; export `metadata.json` carries arq_signals_version, schema_version, generated_at, instance_id, target_name (when scoped), high_sensitivity_collectors_enabled, collector_status_schema_version; no secrets or query payloads in audit attributes |
 | R079 | Operational metrics endpoint | TC-SIG-066 | COVERED | BEHAVIORAL | Optional Prometheus `/metrics` endpoint, off by default, gated by `signals.metrics_enabled`; emits 12 operational counters/gauges/histograms with bounded labels (target, status, reason, error_category); never exposes SQL text, query results, definitions, hostnames, dbnames, usernames, or paths; inherits the API's bearer auth |
 | R081 | Version-aware query catalog | TC-SIG-068 | COVERED | BEHAVIORAL | Per-cycle discovery probe (server_version_num, major, extensions, database, current_user); per-major catalog files pg14..pg18 + pg19 placeholder; stable logical collector IDs; output column normalization across majors; PG 18 fixes pg_stat_io_v1 (read_bytes/write_bytes/extend_bytes vs op_bytes) and pg_stat_wal_v1 (wal_writes/wal_syncs vs wal_write/wal_sync); experimental fallback for PG 19 |
+| R082 | Control-plane boundary (Mode A / Mode B) | TC-SIG-069..073 (planned) | PLANNED | BEHAVIORAL | Design-only rule defining the boundary between standalone OSS Mode A and Arq-managed Mode B. Planned tests: TC-SIG-069 backward-compat empty-body POST /collect/now; TC-SIG-070 narrowing by valid target names; TC-SIG-071 unknown target name → 400 with rejected list; TC-SIG-072 disabled target rejection; TC-SIG-073 audit-event extension carries request_id + accepted/rejected target lists. Implementation lands in phased follow-up. |
