@@ -155,12 +155,78 @@ For the full safety model, see
 
 ## Supported PostgreSQL versions
 
-Arq Signals supports PostgreSQL 14 and later. Smoke-tested against
-PostgreSQL 14, 15, 16, 17, and 18. Version-specific collectors
-(e.g. `checkpointer_stats_v1` on PG 17+) are automatically included
-or excluded based on the detected server version. Collectors requiring
-optional extensions (e.g. `pg_stat_statements`) are silently skipped
-when the extension is not installed.
+Arq Signals has first-class catalog support for **PostgreSQL 14, 15,
+16, 17, and 18**. Each major has its own catalog file
+(`internal/pgqueries/catalog_pgN.go`) that carries the SQL needed
+when a `pg_stat_*` view's column shape differs from the version-
+agnostic default. Logical collector IDs (e.g. `pg_stat_io_v1`) stay
+stable across majors — only the SQL underneath changes.
+
+A per-cycle discovery probe runs first on each target and returns
+the server's `version`, `server_version_num`, installed extensions,
+current database, and current user. Catalog selection is driven by
+that probe, not by configured assumption. Version-specific collectors
+(e.g. `checkpointer_stats_v1` on PG 17+) and extension-gated
+collectors (e.g. `pg_stat_statements_v1`) are included or skipped
+automatically.
+
+**PostgreSQL 19** is treated as **experimental**: the daemon falls
+back to the highest supported catalog (PG 18) and logs a startup
+warning so the experimental status is visible. PostgreSQL versions
+below 14 are out of scope.
+
+## Security model
+
+Arq Signals is local-first by design:
+
+- **No data egress.** The daemon writes snapshots only to local
+  storage (a SQLite file under `database.path`) and serves them via
+  the HTTP API on the operator's listener. There is no outbound
+  telemetry, no LLM call, no analytics ping. The repository's
+  boundary tests assert this at every build.
+- **Read-only PostgreSQL access.** Three layers: a static SQL linter
+  rejects DDL/DML at registration; the session is set to
+  `default_transaction_read_only=on`; every collector query runs
+  inside a `BEGIN ... READ ONLY` transaction. Roles with `rolsuper`,
+  `rolreplication`, or `rolbypassrls` are refused.
+- **No secrets in artifacts.** Passwords, API tokens, and DSNs never
+  appear in logs, exports, or the metrics endpoint. A central
+  audit-event denylist filters secret-shaped attribute keys before
+  any slog record is emitted (R078).
+- **Off-by-default surfaces.** The Prometheus `/metrics` endpoint
+  (R079), the high-sensitivity collector pack (R075), and the
+  per-collector export view (R080) are all opt-in and have no effect
+  unless explicitly enabled in `signals.yaml`.
+
+## Verifying a release
+
+Releases are published as multi-arch container images at
+`ghcr.io/elevarq/arq-signals` with cosign keyless signatures, an
+SPDX SBOM (OCI attestation **and** downloadable file), and a SLSA
+build provenance attestation (`mode=max`).
+
+Quick signature verification:
+
+```bash
+cosign verify ghcr.io/elevarq/arq-signals:<VERSION> \
+  --certificate-identity-regexp='github.com/Elevarq/Arq-Signals/.github/workflows/release.yml@' \
+  --certificate-oidc-issuer='https://token.actions.githubusercontent.com'
+```
+
+Inspect the SBOM (registry attestation):
+
+```bash
+cosign download sbom ghcr.io/elevarq/arq-signals:<VERSION> > sbom.spdx.json
+```
+
+Confirm the image is multi-arch:
+
+```bash
+docker buildx imagetools inspect ghcr.io/elevarq/arq-signals:<VERSION>
+```
+
+Full operator checklist (provenance, Trivy re-scan, OCI labels, etc.):
+[`docs/release-verification.md`](docs/release-verification.md).
 
 ## Installation
 

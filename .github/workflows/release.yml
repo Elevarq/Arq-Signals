@@ -134,8 +134,15 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       digest: ${{ steps.push.outputs.digest }}
+      tags: ${{ steps.meta.outputs.tags }}
     steps:
       - uses: actions/checkout@v5
+
+      # QEMU is required so buildx can produce arm64 layers on an amd64
+      # runner — Go cross-compiles natively, but Alpine apk add and
+      # adduser in the runtime stage execute on each target arch.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -152,39 +159,81 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.IMAGE_NAME }}
+          # latest=auto: only the highest non-pre-release semver also
+          # gets the floating `latest` tag. Pre-releases (vX.Y.Z-rc.1)
+          # never overwrite latest. `latest` is produced by CI only —
+          # never pushed manually.
+          flavor: |
+            latest=auto
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+          # OCI annotations land on the image manifest. metadata-action
+          # sets a baseline (source, revision, created); the explicit
+          # labels below add the rest of the org.opencontainers.image.*
+          # set so consumers can identify the build without pulling.
+          labels: |
+            org.opencontainers.image.title=arq-signals
+            org.opencontainers.image.description=Open-source PostgreSQL diagnostic signal collector — local-first, no data egress.
+            org.opencontainers.image.licenses=BSD-3-Clause
+            org.opencontainers.image.vendor=Elevarq
+            org.opencontainers.image.documentation=https://github.com/Elevarq/Arq-Signals/blob/main/README.md
 
-      - name: Build and push
+      - name: Build and push (multi-arch + SBOM + SLSA provenance)
         id: push
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
+          # Multi-arch manifest list. Buildx produces both per-arch
+          # images and publishes a single manifest list at the digest;
+          # `docker pull` auto-selects by host platform.
+          platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             VERSION=${{ needs.validate.outputs.version }}
             COMMIT=${{ github.sha }}
             DATE=${{ github.event.head_commit.timestamp }}
+          # Registry-attached SBOM: buildkit generates a per-platform
+          # SPDX SBOM and pushes it as an OCI attestation referenced
+          # from the image digest. Consumers retrieve it with
+          # `cosign download sbom <image>` (or `docker buildx
+          # imagetools inspect --format '{{json .SBOM}}'`).
+          sbom: true
+          # SLSA build provenance attestation, mode=max. Records the
+          # builder identity, source materials, build parameters, and
+          # output digests in an in-toto statement attached to the
+          # image. Verifiable with `cosign verify-attestation
+          # --type slsaprovenance ...`.
+          provenance: mode=max
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
 
-      - name: Sign image
+      # Keyless signing: sigstore Fulcio issues a short-lived
+      # certificate bound to this workflow's GitHub OIDC identity. No
+      # long-lived signing key is stored anywhere. Verification at
+      # consumption time binds the signature back to the workflow ref
+      # via the certificate identity (see docs/release-verification.md).
+      - name: Sign image (cosign keyless)
         run: cosign sign --yes ${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}
 
-      - name: Generate SBOM
+      # The release also publishes a downloadable SPDX SBOM file as a
+      # workflow artifact. This is independent of the registry-attached
+      # SBOM (sbom: true above) — the file artifact lets consumers
+      # download the SBOM without pulling the image at all.
+      - name: Generate SBOM artifact (file)
         uses: anchore/sbom-action@v0
         with:
           image: ${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}
           format: spdx-json
           output-file: sbom.spdx.json
 
-      - name: Upload SBOM
+      - name: Upload SBOM artifact
         uses: actions/upload-artifact@v5
         with:
           name: sbom
@@ -264,19 +313,24 @@ jobs:
 
           ---
 
-          ## Supply Chain
+          ## Supply chain
 
           - Image: \`${{ env.IMAGE_NAME }}:${VERSION}\`
           - Digest: \`${{ needs.publish.outputs.digest }}\`
-          - Signed with [cosign](https://github.com/sigstore/cosign) (keyless, GitHub OIDC)
-          - SBOM attached (SPDX JSON)
+          - Architectures: \`linux/amd64\`, \`linux/arm64\`
+          - Cosign-signed (keyless, GitHub OIDC)
+          - SBOM attached as OCI attestation **and** as \`sbom.spdx.json\` release asset
+          - SLSA build provenance attestation (\`mode=max\`)
 
-          Verify signature:
+          Quick signature verification:
           \`\`\`bash
           cosign verify ${{ env.IMAGE_NAME }}:${VERSION} \
-            --certificate-identity-regexp='github.com/Elevarq/' \
+            --certificate-identity-regexp='github.com/Elevarq/Arq-Signals/.github/workflows/release.yml@' \
             --certificate-oidc-issuer='https://token.actions.githubusercontent.com'
           \`\`\`
+
+          Full verification checklist (manifest, SBOM, provenance, Trivy):
+          [docs/release-verification.md](https://github.com/Elevarq/Arq-Signals/blob/main/docs/release-verification.md)
           EOF
 
       - name: Create GitHub release
