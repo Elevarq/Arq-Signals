@@ -12,11 +12,13 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/oklog/ulid/v2"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/elevarq/arq-signals/internal/collector"
@@ -164,36 +166,60 @@ func handleStatus(deps *Deps) http.HandlerFunc {
 	}
 }
 
-// handleCollectNow accepts an optional JSON body (R082 Phase 1) that
-// narrows the cycle to a subset of configured targets. The historical
-// behaviour — empty body, no body, or `Content-Length: 0` — keeps
-// collecting every enabled target and is byte-for-byte unchanged.
+// requestIDPattern bounds R082 Phase 2's `request_id` correlation
+// identifier. ASCII alphanumerics, underscore, dash; up to 32 chars.
+// Restricting the charset keeps audit logs greppable and prevents
+// log-injection via control bytes. ULIDs satisfy this regex.
+var requestIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,32}$`)
+
+// reasonPattern bounds R082 Phase 2's `reason` label. Shares the
+// request_id charset so neither field can carry log-injection
+// payloads or unbounded whitespace. Up to 64 chars.
+var reasonPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+
+// handleCollectNow handles POST /collect/now with the full R082
+// Phase 1 + Phase 2 contract.
 //
-// New behaviour when the body is present and parses to JSON:
+// Body is optional. The historical empty-body path keeps collecting
+// every enabled target and is unchanged at the HTTP level. Phase 2
+// adds a single new behaviour: every request — empty body included —
+// now emits an `audit_event=collect_now_requested` slog record with
+// actor, requested_targets, accepted_targets, request_id, and (when
+// supplied) reason. R078's audit-attribute denylist remains in
+// force; secrets and SQL payloads never reach the audit log.
 //
-//	{"targets": ["a", "b"]}
+// Body shape (all fields optional):
 //
-// Validation rules (R082):
-//   - `targets` field absent → collect all enabled targets.
-//   - `targets` empty array → 400 Bad Request (client bug; never
-//     silently treated as "collect nothing" or "collect all").
-//   - Any name not in `signals.yaml` → 400 with reason
-//     `unknown_target`.
-//   - Any name on a target with `enabled: false` → 400 with reason
-//     `disabled_target`.
-//   - Duplicate names are deduplicated silently.
+//	{
+//	  "targets": ["a", "b"],
+//	  "request_id": "01J5K…",
+//	  "reason": "scheduled_arq_cycle"
+//	}
 //
-// On success the 202 response carries `accepted_targets` so the
-// caller can confirm which targets were scheduled. The 400 response
-// carries `accepted_targets` (the names that *would* have been
-// collected) plus `rejected_targets` with per-name reasons. The
-// cycle is not triggered when any target was rejected.
+// Validation:
+//   - targets empty array, unknown name, or disabled target → 400
+//     with `accepted_targets` + per-name `rejected_targets`. Emits
+//     `collect_now_rejected` audit event. (Phase 1 contract,
+//     unchanged.)
+//   - request_id present but doesn't match `^[A-Za-z0-9_-]{1,32}$`
+//     → 400, emits `collect_now_rejected`.
+//   - reason present but doesn't match `^[A-Za-z0-9_-]{1,64}$`
+//     → 400, emits `collect_now_rejected`.
+//   - Invalid JSON → 400, emits `collect_now_rejected`.
+//
+// When the channel buffer is full because a previous on-demand cycle
+// is still queued, the request returns 202 (R032: no overlapping
+// cycles, the in-flight filter wins) and emits a
+// `collect_now_dropped` audit event so the request_id stays in the
+// trail even when the cycle never fires.
+//
+// actor is always `local_operator` in Phase 2. The
+// `arq_control_plane` actor value is reserved for Phase 3.
 func handleCollectNow(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		body = bytes.TrimSpace(body)
 
-		var targetFilter []string
 		var allEnabled []string
 		for _, t := range deps.Targets {
 			if t.Enabled {
@@ -201,19 +227,73 @@ func handleCollectNow(deps *Deps) http.HandlerFunc {
 			}
 		}
 
+		var (
+			targetFilter   []string
+			requestID      string
+			reason         string
+			suppliedReqID  bool
+			suppliedReason bool
+		)
+
+		// Parse body when non-empty. Empty body retains Phase 1 backward
+		// compatibility — no targets / no request_id / no reason.
 		if len(body) > 0 {
 			var req struct {
-				Targets *[]string `json:"targets,omitempty"`
+				Targets   *[]string `json:"targets,omitempty"`
+				RequestID *string   `json:"request_id,omitempty"`
+				Reason    *string   `json:"reason,omitempty"`
 			}
 			if err := json.Unmarshal(body, &req); err != nil {
+				safety.AuditLog("collect_now_rejected",
+					"actor", "local_operator",
+					"error", "invalid_json",
+				)
 				writeJSON(w, http.StatusBadRequest, map[string]any{
 					"error": "invalid JSON body",
 				})
 				return
 			}
 
+			// Validate request_id format before anything else so we can
+			// surface it on subsequent rejection events.
+			if req.RequestID != nil {
+				if !requestIDPattern.MatchString(*req.RequestID) {
+					safety.AuditLog("collect_now_rejected",
+						"actor", "local_operator",
+						"error", "invalid_request_id",
+					)
+					writeJSON(w, http.StatusBadRequest, map[string]any{
+						"error": "request_id must match ^[A-Za-z0-9_-]{1,32}$",
+					})
+					return
+				}
+				requestID = *req.RequestID
+				suppliedReqID = true
+			}
+
+			if req.Reason != nil {
+				if !reasonPattern.MatchString(*req.Reason) {
+					safety.AuditLog("collect_now_rejected",
+						"actor", "local_operator",
+						"request_id", requestID,
+						"error", "invalid_reason",
+					)
+					writeJSON(w, http.StatusBadRequest, map[string]any{
+						"error": "reason must match ^[A-Za-z0-9_-]{1,64}$",
+					})
+					return
+				}
+				reason = *req.Reason
+				suppliedReason = true
+			}
+
 			if req.Targets != nil {
 				if len(*req.Targets) == 0 {
+					safety.AuditLog("collect_now_rejected",
+						"actor", "local_operator",
+						"request_id", requestID,
+						"error", "empty_targets_array",
+					)
 					writeJSON(w, http.StatusBadRequest, map[string]any{
 						"error": "targets must be a non-empty array; omit the field to collect all enabled targets",
 					})
@@ -252,6 +332,19 @@ func handleCollectNow(deps *Deps) http.HandlerFunc {
 				}
 
 				if len(rejected) > 0 {
+					rejectedAttrs := []any{
+						"actor", "local_operator",
+						"requested_targets", *req.Targets,
+						"accepted_targets", accepted,
+						"rejected_targets", rejected,
+					}
+					if suppliedReqID {
+						rejectedAttrs = append(rejectedAttrs, "request_id", requestID)
+					}
+					if suppliedReason {
+						rejectedAttrs = append(rejectedAttrs, "reason", reason)
+					}
+					safety.AuditLog("collect_now_rejected", rejectedAttrs...)
 					writeJSON(w, http.StatusBadRequest, map[string]any{
 						"error":            "one or more targets cannot be collected",
 						"accepted_targets": accepted,
@@ -264,17 +357,69 @@ func handleCollectNow(deps *Deps) http.HandlerFunc {
 			}
 		}
 
+		// Generate a ULID when the caller didn't supply a request_id
+		// so cycle audit events always carry a correlation id.
+		if requestID == "" {
+			requestID = newRequestID()
+		}
+
+		// Compute the effective response/audit target set.
 		responseTargets := targetFilter
 		if responseTargets == nil {
 			responseTargets = allEnabled
 		}
 
-		deps.Collector.CollectNow(targetFilter)
+		// Audit: every successful request emits collect_now_requested
+		// before queuing. Phase 2 actor invariant: always
+		// local_operator until Phase 3 introduces a separate
+		// arq_control_plane token (R082).
+		requestedAttrs := []any{
+			"actor", "local_operator",
+			"request_id", requestID,
+			"requested_targets", requestedTargetsAuditValue(targetFilter, allEnabled),
+			"accepted_targets", responseTargets,
+		}
+		if suppliedReason {
+			requestedAttrs = append(requestedAttrs, "reason", reason)
+		}
+		safety.AuditLog("collect_now_requested", requestedAttrs...)
+
+		queued := deps.Collector.CollectNow(collector.CollectRequest{
+			Targets:   targetFilter,
+			RequestID: requestID,
+		})
+		if !queued {
+			safety.AuditLog("collect_now_dropped",
+				"actor", "local_operator",
+				"request_id", requestID,
+				"reason_category", "previous_request_pending",
+			)
+		}
+
 		writeJSON(w, http.StatusAccepted, map[string]any{
 			"status":           "collection triggered",
+			"request_id":       requestID,
 			"accepted_targets": responseTargets,
 		})
 	}
+}
+
+// requestedTargetsAuditValue returns either the explicit narrowing
+// list or the literal string "all_enabled" so the audit log is
+// unambiguous when the caller omitted `targets`. Keeps the audit
+// attribute value bounded — R078 forbids unbounded label content.
+func requestedTargetsAuditValue(targetFilter, allEnabled []string) any {
+	if targetFilter != nil {
+		return targetFilter
+	}
+	return "all_enabled"
+}
+
+// newRequestID generates a ULID for the audit-correlation field
+// when the caller didn't supply request_id. ULIDs are time-ordered,
+// 26 ASCII chars, and naturally satisfy requestIDPattern.
+func newRequestID() string {
+	return ulid.MustNew(ulid.Now(), rand.Reader).String()
 }
 
 func handleExport(deps *Deps) http.HandlerFunc {

@@ -701,7 +701,7 @@ Content-Type: application/json
 | Field | Type | Required | Behaviour |
 |---|---|---|---|
 | `targets` | string[] | optional | Subset of configured target names. When **absent**, behaviour matches Mode A — collect all enabled targets. When **present and non-empty**, the cycle's effective set is `targets ∩ enabled-configured-targets`. An **empty array** (`"targets": []`) is treated as a client bug and rejected with `400 Bad Request`; collectors are never silently dropped. Backward compatible: empty body / no body retains existing semantics. |
-| `reason` | string (≤ 64 chars) | optional | Free-text label surfaced in audit events. Not validated; never logged into a label set with cardinality concerns. |
+| `reason` | string matching `^[A-Za-z0-9_-]{1,64}$` | optional | Short label surfaced in audit events. Restricted to the same charset as `request_id` so neither field can carry log-injection bytes or unbounded whitespace. Not free-form prose. |
 | `request_id` | string matching `^[A-Za-z0-9_-]+$` (≤ 32 chars) | optional | Correlation identifier propagated through to per-target audit events. Restricted to ASCII alphanumerics, `_`, and `-` so audit-log greppability stays predictable. When absent, Arq Signal generates a ULID (which already satisfies the regex). |
 
 Response:
@@ -725,18 +725,40 @@ disabled targets are never silently dropped from the accepted set.
 
 #### Audit requirements
 
-Every `/collect/now` request emits an extended
-`audit_event=collect_now_requested` slog record carrying:
+`/collect/now` emits one of three top-level audit events per
+request, each carrying the actor and (when supplied) the
+correlation id:
 
-- `request_id` — propagated through to per-target
-  `collection_started` / `collection_completed` events for end-to-end
-  correlation.
-- `requested_targets` — count + list as supplied in the request
-  body (or "all enabled" when no `targets` field was given).
-- `accepted_targets` — count + list actually scheduled.
-- `rejected_targets` — count + list with a `reason` enum:
-  `unknown_target`, `disabled_target`.
-- `reason` — the request's `reason` field, when supplied.
+| Event | When emitted | Carries |
+|---|---|---|
+| `collect_now_requested` | request was accepted; cycle was queued. | `actor`, `request_id`, `requested_targets`, `accepted_targets`, optional `reason`. |
+| `collect_now_rejected` | request failed validation. The cycle is **not** queued. | `actor`, `error` (one of `invalid_json`, `invalid_request_id`, `invalid_reason`, `empty_targets_array`, `targets_not_collectible`), plus the same target / id / reason fields as far as they were parsed before the rejection. |
+| `collect_now_dropped` | request passed validation but the on-demand channel buffer is already full (a previous on-demand request is queued; R032 prevents overlapping cycles). The cycle for **this** request_id will not run. | `actor`, `request_id`, `reason_category=previous_request_pending`. |
+
+Successful cycles also propagate the `request_id` through to the
+per-target events:
+
+- `collection_started` — `target`, plus `request_id` when non-empty.
+- `collection_completed` — `target`, `snapshot_id`, `status`,
+  `duration_ms`, the four `collectors_*` counters, plus
+  `request_id` when non-empty.
+
+Field semantics:
+
+- `request_id` — when the caller did not supply one, Arq Signal
+  generates a ULID. Always present on `collect_now_requested` and
+  `collect_now_dropped`. May be absent on `collect_now_rejected`
+  (e.g. an invalid `request_id` field never produces a usable id).
+- `requested_targets` — explicit list when the request narrowed the
+  cycle, the literal string `all_enabled` when the `targets` field
+  was absent. Audit attribute values are bounded; never an
+  unbounded label set.
+- `accepted_targets` — list of target names actually scheduled.
+- `rejected_targets` — list of `{name, reason}` records on
+  `collect_now_rejected` for the per-target failure paths. The
+  `reason` enum: `unknown_target`, `disabled_target`.
+- `reason` — the request's optional `reason` label, surfaced
+  verbatim (already charset-validated).
 - `actor` — `local_operator` for every Phase 1 / Phase 2 request,
   regardless of request shape. The `arq_control_plane` actor value
   is reserved for Phase 3, where a separate
@@ -747,8 +769,8 @@ Every `/collect/now` request emits an extended
   caller forge the audit log.
 
 The R078 audit-attribute denylist remains in force. Secrets, SQL
-payloads, and PG row data are never present in audit attributes
-regardless of request shape.
+payloads, raw request bodies, and PG row data are never present
+in audit attributes regardless of request shape.
 
 #### Security requirements
 
