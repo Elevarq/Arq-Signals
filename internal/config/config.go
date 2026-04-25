@@ -1,6 +1,7 @@
 package config
 
 import (
+	"crypto/subtle"
 	"fmt"
 	"os"
 	"strconv"
@@ -35,7 +36,24 @@ type SignalsConfig struct {
 	HighSensitivityCollectorsEnabled bool          `yaml:"high_sensitivity_collectors_enabled"`
 	MetricsEnabled                   bool          `yaml:"metrics_enabled"`
 	MetricsPath                      string        `yaml:"metrics_path"`
+	// R083: Mode B opt-in. "standalone" (default) keeps Phase 2
+	// behaviour byte-for-byte. "arq_managed" activates the
+	// arq_control_plane_token check.
+	Mode                     string `yaml:"mode"`
+	ArqControlPlaneTokenFile string `yaml:"arq_control_plane_token_file"`
+	ArqControlPlaneTokenEnv  string `yaml:"arq_control_plane_token_env"`
 }
+
+// R083 mode values.
+const (
+	ModeStandalone = "standalone"
+	ModeArqManaged = "arq_managed"
+)
+
+// MinArqControlPlaneTokenLength is the floor for the R083 control-
+// plane token. 32 chars matches the doc-stated minimum and is
+// sufficient entropy for HMAC-equivalent strength.
+const MinArqControlPlaneTokenLength = 32
 
 type TargetConfig struct {
 	Name            string `yaml:"name"`
@@ -135,6 +153,7 @@ func DefaultConfig() Config {
 			QueryTimeoutS:        "10s",
 			MetricsEnabled:       false,
 			MetricsPath:          "/metrics",
+			Mode:                 ModeStandalone,
 		},
 		API: APIConfig{
 			ListenAddr:    "127.0.0.1:8081",
@@ -283,6 +302,16 @@ func applyEnvOverrides(cfg *Config) error {
 	if v := os.Getenv("ARQ_SIGNALS_METRICS_PATH"); v != "" {
 		cfg.Signals.MetricsPath = v
 	}
+	// R083 — Mode B knobs.
+	if v := os.Getenv("ARQ_SIGNALS_MODE"); v != "" {
+		cfg.Signals.Mode = strings.ToLower(v)
+	}
+	if v := os.Getenv("ARQ_SIGNALS_ARQ_CONTROL_PLANE_TOKEN_FILE"); v != "" {
+		cfg.Signals.ArqControlPlaneTokenFile = v
+	}
+	if v := os.Getenv("ARQ_SIGNALS_ARQ_CONTROL_PLANE_TOKEN_ENV"); v != "" {
+		cfg.Signals.ArqControlPlaneTokenEnv = v
+	}
 	// File takes precedence over the raw env var when both are set —
 	// matches the _FILE convention used by the official postgres image.
 	// A missing or unreadable file is a hard error so a deployment
@@ -368,6 +397,25 @@ func ValidateStrict(cfg Config) (warnings []string, err error) {
 		case path == "/status" || path == "/collect/now" || path == "/export":
 			hard = append(hard, fmt.Sprintf("signals.metrics_path %q collides with an existing API path", path))
 		}
+	}
+
+	// R083: mode + control-plane token configuration. Cross-token
+	// equality and length checks happen later in ValidateModeBTokens
+	// because they need the resolved api.token, which is generated
+	// after Load returns.
+	switch cfg.Signals.Mode {
+	case "", ModeStandalone, ModeArqManaged:
+		// allowed (empty == standalone via default)
+	default:
+		hard = append(hard, fmt.Sprintf("signals.mode %q must be %q or %q", cfg.Signals.Mode, ModeStandalone, ModeArqManaged))
+	}
+	if cfg.Signals.ArqControlPlaneTokenFile != "" && cfg.Signals.ArqControlPlaneTokenEnv != "" {
+		hard = append(hard, "signals.arq_control_plane_token_file and signals.arq_control_plane_token_env are mutually exclusive — pick one")
+	}
+	if cfg.Signals.Mode == ModeArqManaged &&
+		cfg.Signals.ArqControlPlaneTokenFile == "" &&
+		cfg.Signals.ArqControlPlaneTokenEnv == "" {
+		hard = append(hard, `signals.mode is "arq_managed" but no control-plane token is configured (set arq_control_plane_token_file or arq_control_plane_token_env)`)
 	}
 
 	seen := make(map[string]int, len(cfg.Targets))
@@ -527,6 +575,63 @@ func ValidateProdTLS(cfg Config) error {
 		}
 	}
 
+	return nil
+}
+
+// ResolveArqControlPlaneToken reads the configured Arq control-plane
+// token (R083). It is called per authentication attempt by the auth
+// middleware so rotating the file's contents takes effect on the
+// next request — no daemon restart required. Returns empty string
+// when mode != arq_managed or when no source is configured (caller
+// treats that as "control-plane auth disabled" without allocation).
+//
+// File source is preferred over env-var source. If both are set the
+// file wins; ValidateStrict already rejects the both-set case at
+// startup so this only matters under a lossy env reload.
+func ResolveArqControlPlaneToken(s SignalsConfig) (string, error) {
+	if s.Mode != ModeArqManaged {
+		return "", nil
+	}
+	switch {
+	case s.ArqControlPlaneTokenFile != "":
+		data, err := os.ReadFile(s.ArqControlPlaneTokenFile)
+		if err != nil {
+			return "", fmt.Errorf("read arq_control_plane_token_file: %w", err)
+		}
+		// Strip a single trailing newline pair — same convention as
+		// the api.token file and pgpass handling.
+		return strings.TrimRight(string(data), "\n\r"), nil
+	case s.ArqControlPlaneTokenEnv != "":
+		v, ok := os.LookupEnv(s.ArqControlPlaneTokenEnv)
+		if !ok {
+			return "", fmt.Errorf("env var %q referenced by arq_control_plane_token_env is not set", s.ArqControlPlaneTokenEnv)
+		}
+		return v, nil
+	}
+	return "", nil
+}
+
+// ValidateModeBTokens runs the cross-token checks that depend on the
+// resolved values of both tokens (R083): control-plane token length
+// floor and distinctness from the API token. Called from main.go
+// once both tokens are populated; not called when mode != arq_managed.
+//
+// arqToken is the resolved control-plane token (i.e. the result of
+// ResolveArqControlPlaneToken at startup). apiToken is the
+// effective api.token after auto-generation.
+func ValidateModeBTokens(cfg Config, apiToken, arqToken string) error {
+	if cfg.Signals.Mode != ModeArqManaged {
+		return nil
+	}
+	if arqToken == "" {
+		return fmt.Errorf("signals.arq_control_plane_token resolved to empty string — check the configured file or env var")
+	}
+	if len(arqToken) < MinArqControlPlaneTokenLength {
+		return fmt.Errorf("signals.arq_control_plane_token must be at least %d characters", MinArqControlPlaneTokenLength)
+	}
+	if subtle.ConstantTimeCompare([]byte(arqToken), []byte(apiToken)) == 1 {
+		return fmt.Errorf("signals.arq_control_plane_token must differ from api.token")
+	}
 	return nil
 }
 

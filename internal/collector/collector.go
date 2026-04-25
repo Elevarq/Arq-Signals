@@ -52,10 +52,15 @@ type Collector struct {
 // CollectRequest is the on-demand cycle payload carried over
 // collectNowCh. RequestID is the R082 Phase 2 correlation identifier
 // that propagates through to per-target audit events; an empty value
-// means no correlation id was supplied.
+// means no correlation id was supplied. Actor is the R083 audit
+// `actor` value resolved by the auth middleware from the matched
+// token; an empty value means "no actor in scope" (e.g.
+// interval-driven cycles), in which case audit events emit no
+// `actor` attribute at all.
 type CollectRequest struct {
 	Targets   []string // nil = collect every enabled target
 	RequestID string   // empty = no correlation id
+	Actor     string   // empty = omit actor attribute
 }
 
 // lockedRandReader serializes access to a math/rand.Rand source. The
@@ -281,7 +286,7 @@ func (c *Collector) runCycle(ctx context.Context, forceAll bool, req CollectRequ
 				defer cancel()
 			}
 
-			if err := c.collectTarget(tgtCtx, tgt, forceAll, req.RequestID); err != nil {
+			if err := c.collectTarget(tgtCtx, tgt, forceAll, req.RequestID, req.Actor); err != nil {
 				slog.Error("collection failed", "target", tgt.Name, "err", err)
 				c.db.InsertEvent("collect_error", fmt.Sprintf("target=%s err=%v", tgt.Name, err))
 			}
@@ -294,7 +299,7 @@ func (c *Collector) runCycle(ctx context.Context, forceAll bool, req CollectRequ
 	slog.Info("collection cycle completed", "duration_ms", time.Since(start).Milliseconds(), "targets", len(enabled))
 }
 
-func (c *Collector) collectTarget(ctx context.Context, tgt config.TargetConfig, forceAll bool, requestID string) (err error) {
+func (c *Collector) collectTarget(ctx context.Context, tgt config.TargetConfig, forceAll bool, requestID, actor string) (err error) {
 	cycleStart := time.Now()
 	var (
 		snapID string
@@ -303,6 +308,9 @@ func (c *Collector) collectTarget(ctx context.Context, tgt config.TargetConfig, 
 	startedAttrs := []any{"target", tgt.Name}
 	if requestID != "" {
 		startedAttrs = append(startedAttrs, "request_id", requestID)
+	}
+	if actor != "" {
+		startedAttrs = append(startedAttrs, "actor", actor)
 	}
 	safety.AuditLog("collection_started", startedAttrs...)
 	defer func() {
@@ -349,6 +357,9 @@ func (c *Collector) collectTarget(ctx context.Context, tgt config.TargetConfig, 
 		}
 		if requestID != "" {
 			completedAttrs = append(completedAttrs, "request_id", requestID)
+		}
+		if actor != "" {
+			completedAttrs = append(completedAttrs, "actor", actor)
 		}
 		safety.AuditLog("collection_completed", completedAttrs...)
 		c.metrics.ObserveCollection(tgt.Name, status, duration.Seconds())
