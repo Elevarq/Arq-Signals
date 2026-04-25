@@ -213,3 +213,81 @@ func TestAtomicBatchInsert(t *testing.T) {
 		t.Error("expected result for run-1, got nil")
 	}
 }
+
+// TestInsertCollectionAtomicCommitsAll verifies the happy path: snapshot,
+// runs, and results all land in storage from a single InsertCollectionAtomic
+// call.
+// Traces: ARQ-SIGNALS-R077
+func TestInsertCollectionAtomicCommitsAll(t *testing.T) {
+	store := openTestDB(t)
+	targetID, err := store.UpsertTarget("test", "localhost", 5432, "db", "user", "prefer", "NONE", "", true)
+	if err != nil {
+		t.Fatalf("UpsertTarget: %v", err)
+	}
+
+	snap := db.Snapshot{
+		ID: "snap-atomic", TargetID: targetID, CollectedAt: "2026-04-24T00:00:00Z",
+		PGVersion: "16", Payload: []byte(`{"version":"16"}`), SizeBytes: 16,
+	}
+	runs := []db.QueryRun{
+		{ID: "run-a", TargetID: targetID, SnapshotID: snap.ID, QueryID: "q1",
+			CollectedAt: snap.CollectedAt, PGVersion: "16", CreatedAt: snap.CollectedAt, Status: "success"},
+	}
+	results := []db.QueryResult{
+		{RunID: "run-a", Payload: []byte(`{"k":1}`), SizeBytes: 7},
+	}
+
+	if err := store.InsertCollectionAtomic(snap, runs, results); err != nil {
+		t.Fatalf("InsertCollectionAtomic: %v", err)
+	}
+
+	if n, _ := store.CountSnapshots(); n != 1 {
+		t.Errorf("snapshot count = %d, want 1", n)
+	}
+	allRuns, _ := store.GetAllQueryRuns("", "")
+	if len(allRuns) != 1 {
+		t.Errorf("run count = %d, want 1", len(allRuns))
+	}
+	if res, _ := store.GetQueryResultByRunID("run-a"); res == nil {
+		t.Error("result for run-a not persisted")
+	}
+}
+
+// TestInsertCollectionAtomicRollsBackOnRunFailure verifies that if any
+// query_run insert fails (here: two runs share the same primary key),
+// nothing — not even the snapshot — is left behind.
+// Traces: ARQ-SIGNALS-R077
+func TestInsertCollectionAtomicRollsBackOnRunFailure(t *testing.T) {
+	store := openTestDB(t)
+	targetID, err := store.UpsertTarget("test", "localhost", 5432, "db", "user", "prefer", "NONE", "", true)
+	if err != nil {
+		t.Fatalf("UpsertTarget: %v", err)
+	}
+
+	snap := db.Snapshot{
+		ID: "snap-rollback", TargetID: targetID, CollectedAt: "2026-04-24T00:00:00Z",
+		PGVersion: "16", Payload: []byte(`{}`), SizeBytes: 2,
+	}
+	// Two runs share the same ID — the second insert violates the PK
+	// constraint on query_runs(id) and aborts the transaction.
+	badRuns := []db.QueryRun{
+		{ID: "run-dup", TargetID: targetID, SnapshotID: snap.ID, QueryID: "q1",
+			CollectedAt: snap.CollectedAt, PGVersion: "16", CreatedAt: snap.CollectedAt},
+		{ID: "run-dup", TargetID: targetID, SnapshotID: snap.ID, QueryID: "q2",
+			CollectedAt: snap.CollectedAt, PGVersion: "16", CreatedAt: snap.CollectedAt},
+	}
+
+	err = store.InsertCollectionAtomic(snap, badRuns, nil)
+	if err == nil {
+		t.Fatal("expected error from duplicate run ID, got nil")
+	}
+
+	// Critical: the snapshot must NOT be present, otherwise readers would
+	// observe a snapshot with no runs (the partial state R077 forbids).
+	if n, _ := store.CountSnapshots(); n != 0 {
+		t.Errorf("snapshot count = %d after rollback, want 0", n)
+	}
+	if runs, _ := store.GetAllQueryRuns("", ""); len(runs) != 0 {
+		t.Errorf("run count = %d after rollback, want 0", len(runs))
+	}
+}

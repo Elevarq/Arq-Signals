@@ -30,9 +30,11 @@ func TestCommitErrorIsChecked(t *testing.T) {
 }
 
 // TestCommitFailureBlocksDownstreamPersistence verifies that a commit
-// failure causes the function to return before reaching InsertQueryRunBatch
-// and InsertSnapshot. This ensures no contradictory state is created in
-// SQLite when the PostgreSQL transaction fails.
+// failure causes the function to return before reaching the downstream
+// SQLite write (InsertCollectionAtomic, which atomically persists the
+// snapshot, query runs and query results — see R077). This ensures no
+// contradictory state is created in SQLite when the PostgreSQL
+// transaction fails.
 //
 // Traces: ARQ-SIGNALS-R021 / TC-SIG-036
 func TestCommitFailureBlocksDownstreamPersistence(t *testing.T) {
@@ -41,28 +43,20 @@ func TestCommitFailureBlocksDownstreamPersistence(t *testing.T) {
 
 	// Find the positions of the commit error handling and downstream persistence.
 	commitReturn := strings.Index(src, `return fmt.Errorf("commit tx for`)
-	insertBatch := strings.Index(src, "InsertQueryRunBatch")
-	insertSnap := strings.Index(src, "InsertSnapshot")
+	atomicInsert := strings.Index(src, "InsertCollectionAtomic")
 
 	if commitReturn < 0 {
 		t.Fatal("collector.go does not return an error on commit failure — " +
 			"missing 'return fmt.Errorf(\"commit tx for...'")
 	}
-	if insertBatch < 0 {
-		t.Fatal("collector.go does not call InsertQueryRunBatch")
-	}
-	if insertSnap < 0 {
-		t.Fatal("collector.go does not call InsertSnapshot")
+	if atomicInsert < 0 {
+		t.Fatal("collector.go does not call InsertCollectionAtomic")
 	}
 
-	// The commit-error return must appear BEFORE the downstream persistence calls.
+	// The commit-error return must appear BEFORE the downstream persistence call.
 	// This guarantees that if commit fails, the function exits before writing to SQLite.
-	if commitReturn > insertBatch {
-		t.Error("commit error return appears AFTER InsertQueryRunBatch — " +
-			"SQLite writes may proceed after failed PostgreSQL commit")
-	}
-	if commitReturn > insertSnap {
-		t.Error("commit error return appears AFTER InsertSnapshot — " +
+	if commitReturn > atomicInsert {
+		t.Error("commit error return appears AFTER InsertCollectionAtomic — " +
 			"SQLite writes may proceed after failed PostgreSQL commit")
 	}
 }

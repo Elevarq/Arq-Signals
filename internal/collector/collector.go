@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"math/rand"
 	"sync"
@@ -33,14 +34,31 @@ type Collector struct {
 	maxConcurrentTargets int
 	targetTimeout        time.Duration
 	queryTimeout         time.Duration
-	allowUnsafeRole      bool
-	bypassedChecks       []string
+	allowUnsafeRole        bool
+	highSensitivityEnabled bool
+	bypassedChecks         []string
 	bypassedChecksMu     sync.Mutex
 	pools                map[string]*pgxpool.Pool
 	poolsMu              sync.Mutex
 	collectNowCh         chan struct{}
-	entropy              *rand.Rand
+	entropy              io.Reader
 	running              sync.Mutex
+}
+
+// lockedRandReader serializes access to a math/rand.Rand source. The
+// standard library's *rand.Rand is not safe for concurrent use, but ULID
+// generation runs in parallel per target and per query. Without this wrapper
+// concurrent ulid.MustNew calls race on the underlying state, occasionally
+// producing duplicate IDs.
+type lockedRandReader struct {
+	mu sync.Mutex
+	r  *rand.Rand
+}
+
+func (l *lockedRandReader) Read(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.r.Read(p)
 }
 
 // New creates a new Collector.
@@ -55,7 +73,7 @@ func New(store *db.DB, targets []config.TargetConfig, interval time.Duration, re
 		queryTimeout:         10 * time.Second,
 		pools:                make(map[string]*pgxpool.Pool),
 		collectNowCh:         make(chan struct{}, 1),
-		entropy:              rand.New(rand.NewSource(time.Now().UnixNano())),
+		entropy:              &lockedRandReader{r: rand.New(rand.NewSource(time.Now().UnixNano()))},
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -103,6 +121,14 @@ func WithAllowUnsafeRole(allow bool) CollectorOption {
 // GetAllowUnsafeRole returns whether unsafe role mode is enabled.
 func (c *Collector) GetAllowUnsafeRole() bool {
 	return c.allowUnsafeRole
+}
+
+// WithHighSensitivityCollectors enables the four definition-text collectors
+// flagged HighSensitivity in the query catalog (R075). Off by default.
+func WithHighSensitivityCollectors(enabled bool) CollectorOption {
+	return func(c *Collector) {
+		c.highSensitivityEnabled = enabled
+	}
 }
 
 // recordBypassedChecks stores the specific checks that were bypassed in unsafe mode.
@@ -305,10 +331,13 @@ func (c *Collector) collectTarget(ctx context.Context, tgt config.TargetConfig, 
 	extensions := detectExtensions(ctx, tx)
 
 	// Step 3: Filter eligible queries.
-	eligible := pgqueries.Filter(pgqueries.FilterParams{
-		PGMajorVersion: pgMajor,
-		Extensions:     extensions,
-	})
+	filterParams := pgqueries.FilterParams{
+		PGMajorVersion:         pgMajor,
+		Extensions:             extensions,
+		HighSensitivityEnabled: c.highSensitivityEnabled,
+	}
+	eligible := pgqueries.Filter(filterParams)
+	gatedHighSensitivityIDs := pgqueries.HighSensitivityIDs(filterParams)
 
 	// Step 3b: Apply cadence planner unless forceAll.
 	queries := eligible
@@ -390,6 +419,8 @@ func (c *Collector) collectTarget(ctx context.Context, tgt config.TargetConfig, 
 
 		if qErr != nil {
 			run.Error = qErr.Error()
+			run.Status = "failed"
+			run.Reason = classifyRunError(run.Error)
 			if isPermissionDenied(qErr) {
 				slog.Warn("query permission denied — grant pg_monitor to the monitoring role",
 					"query", q.ID, "target", tgt.Name)
@@ -412,6 +443,7 @@ func (c *Collector) collectTarget(ctx context.Context, tgt config.TargetConfig, 
 		}
 
 		run.RowCount = len(rows)
+		run.Status = "success"
 		runs = append(runs, run)
 
 		// Encode result as NDJSON.
@@ -436,19 +468,30 @@ func (c *Collector) collectTarget(ctx context.Context, tgt config.TargetConfig, 
 		return fmt.Errorf("commit tx for %s: %w", tgt.Name, err)
 	}
 
-	// Step 5: Batch insert query runs + results.
-	if len(runs) > 0 {
-		if err := c.db.InsertQueryRunBatch(runs, results); err != nil {
-			slog.Error("insert query runs failed", "target", tgt.Name, "err", err)
-		}
+	// Step 4b: Record gated high-sensitivity collectors as skipped runs so
+	// collector_status.json contains exactly one entry per registered
+	// collector that was relevant to this target. The operator can see the
+	// gate is active without having to compare against the registry.
+	for _, id := range gatedHighSensitivityIDs {
+		runID := ulid.MustNew(ulid.Timestamp(now), c.entropy).String()
+		runs = append(runs, db.QueryRun{
+			ID:          runID,
+			TargetID:    targetID,
+			SnapshotID:  snapID,
+			QueryID:     id,
+			CollectedAt: collectedAt,
+			PGVersion:   versionStr,
+			CreatedAt:   collectedAt,
+			Status:      "skipped",
+			Reason:      "config_disabled",
+		})
 	}
 
-	// Step 6: Still populate monolithic snapshot for backward compatibility.
+	// Build the legacy monolithic snapshot.
 	payload, err := MarshalPayload(data)
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)
 	}
-
 	snap := db.Snapshot{
 		ID:          snapID,
 		TargetID:    targetID,
@@ -458,8 +501,11 @@ func (c *Collector) collectTarget(ctx context.Context, tgt config.TargetConfig, 
 		SizeBytes:   len(payload),
 	}
 
-	if err := c.db.InsertSnapshot(snap); err != nil {
-		return fmt.Errorf("insert snapshot: %w", err)
+	// Step 5: Persist snapshot + runs + results atomically (R077). A
+	// failure here rolls everything back so an export never sees a
+	// snapshot whose query runs are missing or vice versa.
+	if err := c.db.InsertCollectionAtomic(snap, runs, results); err != nil {
+		return fmt.Errorf("persist collection cycle for %s: %w", tgt.Name, err)
 	}
 
 	slog.Info("snapshot collected", "target", tgt.Name, "id", snap.ID, "size", snap.SizeBytes,

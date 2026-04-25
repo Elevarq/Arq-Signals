@@ -402,6 +402,10 @@ type QueryRun struct {
 	RowCount    int
 	Error       string
 	CreatedAt   string
+	// Status is one of "success", "failed", "skipped". Skipped runs have
+	// Error empty and Reason populated (e.g. "config_disabled").
+	Status string
+	Reason string
 }
 
 type QueryResult struct {
@@ -418,9 +422,48 @@ func (d *DB) InsertQueryRunBatch(runs []QueryRun, results []QueryResult) error {
 	}
 	defer tx.Rollback()
 
+	if err := insertRunsAndResults(tx, runs, results); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// InsertCollectionAtomic persists one collection cycle's snapshot, query
+// runs, and query results inside a single transaction (R077). If any step
+// fails the entire cycle is rolled back so partial state — e.g. a snapshot
+// without its query runs, or runs without their result payloads — never
+// becomes observable to readers or exports.
+func (d *DB) InsertCollectionAtomic(snapshot Snapshot, runs []QueryRun, results []QueryResult) error {
+	tx, err := d.sql.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(
+		"INSERT INTO snapshots (id, target_id, collected_at, pg_version, payload, size_bytes) VALUES (?, ?, ?, ?, ?, ?)",
+		snapshot.ID, snapshot.TargetID, snapshot.CollectedAt, snapshot.PGVersion, string(snapshot.Payload), snapshot.SizeBytes,
+	); err != nil {
+		return fmt.Errorf("insert snapshot: %w", err)
+	}
+
+	if err := insertRunsAndResults(tx, runs, results); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+// insertRunsAndResults shares the prepared-statement loop between the
+// legacy batch insert and the atomic full-cycle insert.
+func insertRunsAndResults(tx *sql.Tx, runs []QueryRun, results []QueryResult) error {
+	if len(runs) == 0 && len(results) == 0 {
+		return nil
+	}
+
 	runStmt, err := tx.Prepare(`INSERT INTO query_runs
-		(id, target_id, snapshot_id, query_id, collected_at, pg_version, duration_ms, row_count, error, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		(id, target_id, snapshot_id, query_id, collected_at, pg_version, duration_ms, row_count, error, created_at, status, reason)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
@@ -433,7 +476,15 @@ func (d *DB) InsertQueryRunBatch(runs []QueryRun, results []QueryResult) error {
 	defer resStmt.Close()
 
 	for _, r := range runs {
-		if _, err := runStmt.Exec(r.ID, r.TargetID, r.SnapshotID, r.QueryID, r.CollectedAt, r.PGVersion, r.DurationMS, r.RowCount, r.Error, r.CreatedAt); err != nil {
+		status := r.Status
+		if status == "" {
+			if r.Error != "" {
+				status = "failed"
+			} else {
+				status = "success"
+			}
+		}
+		if _, err := runStmt.Exec(r.ID, r.TargetID, r.SnapshotID, r.QueryID, r.CollectedAt, r.PGVersion, r.DurationMS, r.RowCount, r.Error, r.CreatedAt, status, r.Reason); err != nil {
 			return fmt.Errorf("insert run %s: %w", r.ID, err)
 		}
 	}
@@ -448,11 +499,11 @@ func (d *DB) InsertQueryRunBatch(runs []QueryRun, results []QueryResult) error {
 		}
 	}
 
-	return tx.Commit()
+	return nil
 }
 
 func (d *DB) GetAllQueryRuns(since, until string) ([]QueryRun, error) {
-	query := "SELECT id, target_id, snapshot_id, query_id, collected_at, pg_version, duration_ms, row_count, error, created_at FROM query_runs WHERE 1=1"
+	query := "SELECT id, target_id, snapshot_id, query_id, collected_at, pg_version, duration_ms, row_count, error, created_at, status, reason FROM query_runs WHERE 1=1"
 	var args []any
 	if since != "" {
 		query += " AND collected_at >= ?"
@@ -469,7 +520,7 @@ func (d *DB) GetAllQueryRuns(since, until string) ([]QueryRun, error) {
 // GetQueryRunsByTarget returns query runs filtered by target ID and
 // optional time range (MTE-R001).
 func (d *DB) GetQueryRunsByTarget(targetID int64, since, until string) ([]QueryRun, error) {
-	query := "SELECT id, target_id, snapshot_id, query_id, collected_at, pg_version, duration_ms, row_count, error, created_at FROM query_runs WHERE target_id = ?"
+	query := "SELECT id, target_id, snapshot_id, query_id, collected_at, pg_version, duration_ms, row_count, error, created_at, status, reason FROM query_runs WHERE target_id = ?"
 	args := []any{targetID}
 	if since != "" {
 		query += " AND collected_at >= ?"
@@ -503,7 +554,7 @@ func (d *DB) scanQueryRuns(query string, args ...any) ([]QueryRun, error) {
 	var out []QueryRun
 	for rows.Next() {
 		var r QueryRun
-		if err := rows.Scan(&r.ID, &r.TargetID, &r.SnapshotID, &r.QueryID, &r.CollectedAt, &r.PGVersion, &r.DurationMS, &r.RowCount, &r.Error, &r.CreatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.TargetID, &r.SnapshotID, &r.QueryID, &r.CollectedAt, &r.PGVersion, &r.DurationMS, &r.RowCount, &r.Error, &r.CreatedAt, &r.Status, &r.Reason); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

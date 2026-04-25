@@ -47,6 +47,9 @@ func All() []QueryDef {
 }
 
 // Filter returns queries eligible for the given PG version and extensions.
+// High-sensitivity queries are excluded unless p.HighSensitivityEnabled is
+// set; the collector emits a skipped/config_disabled status for those
+// separately so operators can see the gate is active.
 func Filter(p FilterParams) []QueryDef {
 	extSet := make(map[string]bool, len(p.Extensions))
 	for _, e := range p.Extensions {
@@ -61,12 +64,44 @@ func Filter(p FilterParams) []QueryDef {
 		if q.RequiresExtension != "" && !extSet[q.RequiresExtension] {
 			continue
 		}
+		if q.HighSensitivity && !p.HighSensitivityEnabled {
+			continue
+		}
 		out = append(out, q)
 	}
 
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].ID < out[j].ID
 	})
+	return out
+}
+
+// HighSensitivityIDs returns the IDs of all registered high-sensitivity
+// queries that are eligible for the given PG version and extensions but
+// are gated off by HighSensitivityEnabled. Used to emit
+// status=skipped/reason=config_disabled entries in collector_status.json.
+func HighSensitivityIDs(p FilterParams) []string {
+	if p.HighSensitivityEnabled {
+		return nil
+	}
+	extSet := make(map[string]bool, len(p.Extensions))
+	for _, e := range p.Extensions {
+		extSet[e] = true
+	}
+	var out []string
+	for _, q := range registry {
+		if !q.HighSensitivity {
+			continue
+		}
+		if q.MinPGVersion > 0 && p.PGMajorVersion < q.MinPGVersion {
+			continue
+		}
+		if q.RequiresExtension != "" && !extSet[q.RequiresExtension] {
+			continue
+		}
+		out = append(out, q.ID)
+	}
+	sort.Strings(out)
 	return out
 }
 

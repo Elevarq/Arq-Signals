@@ -22,16 +22,17 @@ type Config struct {
 }
 
 type SignalsConfig struct {
-	PollInterval         time.Duration `yaml:"-"`
-	PollIntervalS        string        `yaml:"poll_interval"` // e.g. "5m"
-	RetentionDays        int           `yaml:"retention_days"`
-	LogLevel             string        `yaml:"log_level"`
-	LogJSON              bool          `yaml:"log_json"`
-	MaxConcurrentTargets int           `yaml:"max_concurrent_targets"`
-	TargetTimeout        time.Duration `yaml:"-"`
-	TargetTimeoutS       string        `yaml:"target_timeout"`
-	QueryTimeout         time.Duration `yaml:"-"`
-	QueryTimeoutS        string        `yaml:"query_timeout"`
+	PollInterval                    time.Duration `yaml:"-"`
+	PollIntervalS                   string        `yaml:"poll_interval"` // e.g. "5m"
+	RetentionDays                   int           `yaml:"retention_days"`
+	LogLevel                        string        `yaml:"log_level"`
+	LogJSON                         bool          `yaml:"log_json"`
+	MaxConcurrentTargets            int           `yaml:"max_concurrent_targets"`
+	TargetTimeout                   time.Duration `yaml:"-"`
+	TargetTimeoutS                  string        `yaml:"target_timeout"`
+	QueryTimeout                    time.Duration `yaml:"-"`
+	QueryTimeoutS                   string        `yaml:"query_timeout"`
+	HighSensitivityCollectorsEnabled bool          `yaml:"high_sensitivity_collectors_enabled"`
 }
 
 type TargetConfig struct {
@@ -46,6 +47,21 @@ type TargetConfig struct {
 	PasswordEnv     string `yaml:"password_env"`
 	PgpassFile      string `yaml:"pgpass_file"`
 	Enabled         bool   `yaml:"enabled"`
+}
+
+// UnmarshalYAML decodes a TargetConfig with Enabled defaulting to true.
+// Without this, an omitted `enabled:` key would deserialize to the zero
+// value (false), silently disabling targets in configs that don't mention
+// the field. Operators must use explicit `enabled: false` to disable a
+// target.
+func (t *TargetConfig) UnmarshalYAML(value *yaml.Node) error {
+	type rawTarget TargetConfig
+	raw := rawTarget{Enabled: true}
+	if err := value.Decode(&raw); err != nil {
+		return err
+	}
+	*t = TargetConfig(raw)
+	return nil
 }
 
 // SecretType returns the credential source type for display/storage.
@@ -165,34 +181,72 @@ func Load(path string) (Config, error) {
 	return cfg, nil
 }
 
+// parseEnvInt returns the parsed integer for the given ARQ_SIGNALS_* env
+// variable, or an error if the value is set but not a valid integer.
+// Empty/unset returns ok=false with no error.
+func parseEnvInt(name string) (int, bool, error) {
+	v := os.Getenv(name)
+	if v == "" {
+		return 0, false, nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return 0, false, fmt.Errorf("environment variable %s=%q is not a valid integer", name, v)
+	}
+	return n, true, nil
+}
+
+// parseEnvBool accepts "true"/"false"/"1"/"0" (case-insensitive). Any other
+// non-empty value is a hard error so a typo like "yes" is not silently
+// treated as false. Empty/unset returns ok=false with no error.
+func parseEnvBool(name string) (bool, bool, error) {
+	v := os.Getenv(name)
+	if v == "" {
+		return false, false, nil
+	}
+	switch strings.ToLower(v) {
+	case "true", "1":
+		return true, true, nil
+	case "false", "0":
+		return false, true, nil
+	}
+	return false, false, fmt.Errorf("environment variable %s=%q is not a valid boolean (expected true/false/1/0)", name, v)
+}
+
 func applyEnvOverrides(cfg *Config) error {
 	if v := os.Getenv("ARQ_ENV"); v != "" {
 		cfg.Env = strings.ToLower(v)
 	}
-	if v := os.Getenv("ARQ_ALLOW_INSECURE_PG_TLS"); v != "" {
-		cfg.AllowInsecurePgTLS = v == "true" || v == "1"
+	if b, ok, err := parseEnvBool("ARQ_ALLOW_INSECURE_PG_TLS"); err != nil {
+		return err
+	} else if ok {
+		cfg.AllowInsecurePgTLS = b
 	}
-	if v := os.Getenv("ARQ_SIGNALS_ALLOW_UNSAFE_ROLE"); v != "" {
-		cfg.AllowUnsafeRole = v == "true" || v == "1"
+	if b, ok, err := parseEnvBool("ARQ_SIGNALS_ALLOW_UNSAFE_ROLE"); err != nil {
+		return err
+	} else if ok {
+		cfg.AllowUnsafeRole = b
 	}
 	if v := os.Getenv("ARQ_SIGNALS_POLL_INTERVAL"); v != "" {
 		cfg.Signals.PollIntervalS = v
 	}
-	if v := os.Getenv("ARQ_SIGNALS_RETENTION_DAYS"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			cfg.Signals.RetentionDays = n
-		}
+	if n, ok, err := parseEnvInt("ARQ_SIGNALS_RETENTION_DAYS"); err != nil {
+		return err
+	} else if ok {
+		cfg.Signals.RetentionDays = n
 	}
 	if v := os.Getenv("ARQ_SIGNALS_LOG_LEVEL"); v != "" {
 		cfg.Signals.LogLevel = strings.ToLower(v)
 	}
-	if v := os.Getenv("ARQ_SIGNALS_LOG_JSON"); v != "" {
-		cfg.Signals.LogJSON = v == "true" || v == "1"
+	if b, ok, err := parseEnvBool("ARQ_SIGNALS_LOG_JSON"); err != nil {
+		return err
+	} else if ok {
+		cfg.Signals.LogJSON = b
 	}
-	if v := os.Getenv("ARQ_SIGNALS_MAX_CONCURRENT_TARGETS"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			cfg.Signals.MaxConcurrentTargets = n
-		}
+	if n, ok, err := parseEnvInt("ARQ_SIGNALS_MAX_CONCURRENT_TARGETS"); err != nil {
+		return err
+	} else if ok {
+		cfg.Signals.MaxConcurrentTargets = n
 	}
 	if v := os.Getenv("ARQ_SIGNALS_TARGET_TIMEOUT"); v != "" {
 		cfg.Signals.TargetTimeoutS = v
@@ -211,6 +265,11 @@ func applyEnvOverrides(cfg *Config) error {
 	}
 	if v := os.Getenv("ARQ_SIGNALS_API_TOKEN"); v != "" {
 		cfg.API.APIToken = v
+	}
+	if b, ok, err := parseEnvBool("ARQ_SIGNALS_HIGH_SENSITIVITY_COLLECTORS_ENABLED"); err != nil {
+		return err
+	} else if ok {
+		cfg.Signals.HighSensitivityCollectorsEnabled = b
 	}
 	// File takes precedence over the raw env var when both are set —
 	// matches the _FILE convention used by the official postgres image.
@@ -232,10 +291,10 @@ func applyEnvOverrides(cfg *Config) error {
 			name = "default"
 		}
 		port := 5432
-		if v := os.Getenv("ARQ_SIGNALS_TARGET_PORT"); v != "" {
-			if n, err := strconv.Atoi(v); err == nil {
-				port = n
-			}
+		if n, ok, err := parseEnvInt("ARQ_SIGNALS_TARGET_PORT"); err != nil {
+			return err
+		} else if ok {
+			port = n
 		}
 		dbname := os.Getenv("ARQ_SIGNALS_TARGET_DBNAME")
 		if dbname == "" {
@@ -257,6 +316,89 @@ func applyEnvOverrides(cfg *Config) error {
 		cfg.Targets = append(cfg.Targets, tgt)
 	}
 	return nil
+}
+
+// ValidateStrict implements R076. It returns the list of non-fatal warnings
+// (caller logs and continues) and a hard error that the caller must abort
+// on. The hard / warn taxonomy is defined in
+// `features/arq-signals/appendix-b-configuration-schema.md`.
+func ValidateStrict(cfg Config) (warnings []string, err error) {
+	// Hard errors first; we still gather as many as we can find before
+	// returning so the operator sees the full picture in one run.
+	var hard []string
+
+	if cfg.Database.Path == "" {
+		hard = append(hard, "database.path is empty")
+	}
+	if cfg.API.ListenAddr == "" {
+		hard = append(hard, "api.listen_addr is empty")
+	}
+	if cfg.Signals.PollInterval <= 0 {
+		hard = append(hard, "signals.poll_interval must be > 0")
+	}
+	if cfg.Signals.TargetTimeout <= 0 {
+		hard = append(hard, "signals.target_timeout must be > 0")
+	}
+	if cfg.Signals.QueryTimeout <= 0 {
+		hard = append(hard, "signals.query_timeout must be > 0")
+	}
+	if cfg.Signals.RetentionDays < 0 {
+		hard = append(hard, "signals.retention_days must be >= 0")
+	}
+
+	seen := make(map[string]int, len(cfg.Targets))
+	for i, t := range cfg.Targets {
+		if t.Name == "" {
+			hard = append(hard, fmt.Sprintf("target[%d]: name is required", i))
+		} else if prev, ok := seen[t.Name]; ok {
+			hard = append(hard, fmt.Sprintf("target[%d] (%s): duplicate name (also at target[%d])", i, t.Name, prev))
+		} else {
+			seen[t.Name] = i
+		}
+		if t.Host == "" {
+			hard = append(hard, fmt.Sprintf("target[%d] (%s): host is required", i, t.Name))
+		}
+		if t.User == "" {
+			hard = append(hard, fmt.Sprintf("target[%d] (%s): user is required", i, t.Name))
+		}
+		if t.DBName == "" {
+			hard = append(hard, fmt.Sprintf("target[%d] (%s): dbname is required", i, t.Name))
+		}
+		secretCount := 0
+		if t.PasswordFile != "" {
+			secretCount++
+		}
+		if t.PasswordEnv != "" {
+			secretCount++
+		}
+		if t.PgpassFile != "" {
+			secretCount++
+		}
+		if secretCount > 1 {
+			hard = append(hard, fmt.Sprintf("target[%d] (%s): specify at most one of password_file, password_env, pgpass_file", i, t.Name))
+		}
+	}
+
+	// Warnings.
+	if cfg.Signals.PollInterval > 0 && cfg.Signals.PollInterval < 30*time.Second {
+		warnings = append(warnings, fmt.Sprintf("signals.poll_interval is very short (%s); minimum recommended is 30s", cfg.Signals.PollInterval))
+	}
+	if cfg.Signals.RetentionDays == 0 {
+		warnings = append(warnings, "signals.retention_days is 0; snapshots will be deleted on the next cleanup cycle")
+	}
+	if len(cfg.Targets) == 0 {
+		warnings = append(warnings, "no targets configured; the collector will start but have nothing to collect")
+	}
+	for i, t := range cfg.Targets {
+		if cfg.Env != "prod" && t.SSLMode == "prefer" {
+			warnings = append(warnings, fmt.Sprintf("target[%d] (%s): sslmode=prefer does not verify server identity; consider verify-ca or verify-full", i, t.Name))
+		}
+	}
+
+	if len(hard) > 0 {
+		return warnings, fmt.Errorf("configuration is invalid:\n  - %s", strings.Join(hard, "\n  - "))
+	}
+	return warnings, nil
 }
 
 // Validate checks the Config for common issues, returning human-readable

@@ -130,3 +130,35 @@ func TestBuildConnConfigReadOnlyParam(t *testing.T) {
 		t.Errorf("default_transaction_read_only = %q, want %q", val, "on")
 	}
 }
+
+// TestBuildConnConfigEscapesUnsafeFields verifies that values containing
+// spaces, equals signs, single quotes, or backslashes are preserved verbatim
+// rather than being parsed as additional connection options. This guards
+// against connection-string injection from operator-controlled fields.
+// Traces: ARQ-SIGNALS-R024
+func TestBuildConnConfigEscapesUnsafeFields(t *testing.T) {
+	tgt := config.TargetConfig{
+		Name:    "injection-test",
+		Host:    "db.example.com",
+		Port:    5432,
+		DBName:  "mydb sslmode=disable", // attempt to smuggle a setting
+		User:    "user'with\\weird=chars",
+		SSLMode: "verify-full",
+	}
+
+	cfg, err := collector.BuildConnConfig(tgt)
+	if err != nil {
+		t.Fatalf("BuildConnConfig returned error: %v", err)
+	}
+
+	if cfg.Database != "mydb sslmode=disable" {
+		t.Errorf("Database = %q, want literal %q", cfg.Database, "mydb sslmode=disable")
+	}
+	if cfg.User != "user'with\\weird=chars" {
+		t.Errorf("User = %q, want literal %q", cfg.User, "user'with\\weird=chars")
+	}
+	// sslmode set on the target should win over a smuggled value.
+	if cfg.TLSConfig == nil {
+		t.Error("TLSConfig should be set when sslmode=verify-full")
+	}
+}

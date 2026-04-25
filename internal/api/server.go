@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
@@ -162,13 +163,23 @@ func handleExport(deps *Deps) http.HandlerFunc {
 			opts.TargetID = id
 		}
 
+		// Buffer the ZIP fully before writing any response headers. If the
+		// export fails midway we want to return a 500 with an error body, not
+		// a 200 with a truncated/invalid ZIP that the client cannot
+		// distinguish from success.
+		var buf bytes.Buffer
+		if err := deps.Exporter.WriteTo(&buf, opts); err != nil {
+			slog.Error("export failed", "err", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "export failed"})
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/zip")
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=arq-export-%s.zip",
 			time.Now().UTC().Format("20060102-150405")))
-
-		if err := deps.Exporter.WriteTo(w, opts); err != nil {
-			slog.Error("export failed", "err", err)
-			// Headers already sent, can't change status.
+		w.Header().Set("Content-Length", strconv.Itoa(buf.Len()))
+		if _, err := w.Write(buf.Bytes()); err != nil {
+			slog.Error("export write failed", "err", err)
 		}
 	}
 }
@@ -214,13 +225,33 @@ func (l *tokenRateLimiter) recordFailure(ip string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
+	now := time.Now()
 	a, ok := l.attempts[ip]
 	if !ok {
 		a = &tokenAttempt{}
 		l.attempts[ip] = a
 	}
 	a.failures++
-	a.lastAttempt = time.Now()
+	a.lastAttempt = now
+
+	// Opportunistic prune: drop entries older than the lockout window.
+	// Bounds map growth in long-lived processes where attackers come
+	// from many short-lived IPs that never retry.
+	cutoff := now.Add(-tokenLockoutWindow)
+	for otherIP, other := range l.attempts {
+		if other.lastAttempt.Before(cutoff) {
+			delete(l.attempts, otherIP)
+		}
+	}
+}
+
+// recordSuccess clears any prior failures for the IP. Called when a
+// request authenticates successfully so a near-miss IP does not stay
+// near the lockout threshold indefinitely.
+func (l *tokenRateLimiter) recordSuccess(ip string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.attempts, ip)
 }
 
 // recoveryMiddleware catches panics and returns 500.
@@ -299,6 +330,8 @@ func tokenAuthMiddleware(token string, limiter *tokenRateLimiter) func(http.Hand
 				return
 			}
 
+			// Successful authentication clears any prior failure count for this IP.
+			limiter.recordSuccess(ip)
 			next.ServeHTTP(w, r)
 		})
 	}

@@ -38,13 +38,24 @@ func run() error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
+	// Setup logging before validation so warnings reach the configured sink.
+	safety.SetupLogging(cfg.Signals.LogLevel, cfg.Signals.LogJSON)
+
+	// Strict configuration validation (R076). Hard errors abort startup;
+	// warnings are logged and the daemon continues.
+	warnings, err := config.ValidateStrict(cfg)
+	for _, w := range warnings {
+		slog.Warn("config warning", "msg", w)
+	}
+	if err != nil {
+		return err
+	}
+
 	// Enforce Postgres TLS policy.
 	if err := config.ValidateProdTLS(cfg); err != nil {
 		return fmt.Errorf("TLS policy: %w", err)
 	}
 
-	// Setup logging.
-	safety.SetupLogging(cfg.Signals.LogLevel, cfg.Signals.LogJSON)
 	slog.Info("arq-signals starting",
 		"version", safety.Version,
 		"commit", safety.Commit,
@@ -83,6 +94,7 @@ func run() error {
 		collector.WithTargetTimeout(cfg.Signals.TargetTimeout),
 		collector.WithQueryTimeout(cfg.Signals.QueryTimeout),
 		collector.WithAllowUnsafeRole(cfg.AllowUnsafeRole),
+		collector.WithHighSensitivityCollectors(cfg.Signals.HighSensitivityCollectorsEnabled),
 	)
 
 	if cfg.AllowUnsafeRole {

@@ -370,8 +370,12 @@ details.
 ### Container hardening
 
 When deployed via Docker, Arq Signals runs as a non-root user
-(UID 10001) on a minimal Alpine base with no shell in the production
-image.
+(UID 10001) on a minimal Alpine 3.21 base. The image contains
+BusyBox (used by the `wget`-based healthcheck and `tini` init) and
+no Bash, sh or other full shell beyond BusyBox's `ash` applet.
+For deployments that require a shell-free runtime, build against
+a distroless base — the binary is statically linked and CGO-free
+so it runs without glibc.
 
 ## Configuration reference
 

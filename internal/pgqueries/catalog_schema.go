@@ -217,8 +217,9 @@ func init() {
 	//
 	// Specification: specifications/collectors/pg_views_v1.md
 	Register(QueryDef{
-		ID:       "pg_views_definitions_v1",
-		Category: "schema",
+		ID:              "pg_views_definitions_v1",
+		Category:        "schema",
+		HighSensitivity: true,
 		SQL: `SELECT
 			v.schemaname,
 			v.viewname,
@@ -268,8 +269,9 @@ func init() {
 	//
 	// Specification: specifications/collectors/pg_matviews_v1.md
 	Register(QueryDef{
-		ID:       "pg_matviews_definitions_v1",
-		Category: "schema",
+		ID:              "pg_matviews_definitions_v1",
+		Category:        "schema",
+		HighSensitivity: true,
 		SQL: `SELECT
 			m.schemaname,
 			m.matviewname,
@@ -363,8 +365,9 @@ func init() {
 	//
 	// Specification: specifications/collectors/pg_triggers_v1.md
 	Register(QueryDef{
-		ID:       "pg_triggers_definitions_v1",
-		Category: "schema",
+		ID:              "pg_triggers_definitions_v1",
+		Category:        "schema",
+		HighSensitivity: true,
 		SQL: `SELECT
 			n.nspname AS schemaname,
 			c.relname,
@@ -429,9 +432,10 @@ func init() {
 	//
 	// Specification: specifications/collectors/pg_functions_v1.md
 	Register(QueryDef{
-		ID:           "pg_functions_definitions_v1",
-		Category:     "schema",
-		MinPGVersion: 11,
+		ID:              "pg_functions_definitions_v1",
+		Category:        "schema",
+		MinPGVersion:    11,
+		HighSensitivity: true,
 		SQL: `SELECT
 			n.nspname AS schemaname,
 			p.proname,
