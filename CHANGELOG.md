@@ -4,6 +4,28 @@ All notable changes to Arq Signals will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - 2026-04-25
+
+### Added
+
+- High-sensitivity collectors are now explicit opt-in (R075)
+- Strict startup configuration validation with fail-fast behavior (R076)
+- Atomic collection-cycle persistence (R077)
+- Structured audit logging and export metadata for compliance visibility (R078)
+- Optional Prometheus `/metrics` endpoint for Arq Signal health (R079)
+- Version-aware query catalog with per-major PostgreSQL support (14–18, 19 placeholder) (R081)
+- Multi-arch container release (linux/amd64 + linux/arm64) with SBOM, provenance, and cosign signing
+- Release verification documentation
+
+### Fixed
+
+- PostgreSQL 18 compatibility issues in `pg_stat_io_v1` and `pg_stat_wal_v1`
+- Concurrency issue in ULID generation during multi-target collection
+- Connection string construction safety improvements
+- Production-readiness fixes from April 2026 code review
+
+---
+
 ## [0.2.1] - 2026-03-23
 
 ### Security
