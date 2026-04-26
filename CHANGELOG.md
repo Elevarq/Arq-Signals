@@ -4,6 +4,79 @@ All notable changes to Arq Signals will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.2] - 2026-04-25
+
+Hardening release addressing the post-0.3.1 Codex review. Thirteen
+findings closed across collection safety, export integrity, API
+error handling, and supply-chain hygiene. No breaking changes.
+
+This release focuses on correctness, safety, and audit completeness
+under failure conditions.
+
+### Fixed
+- Unsupported PostgreSQL versions now fail closed: targets running a
+  PG major below the supported minimum (currently 14) are rejected
+  immediately after discovery and surfaced with a bounded reason
+  (`version_unsupported`).
+- Skipped collector status completeness: `collector_status.json` now
+  reports every gated collector with its precise reason
+  (`version_unsupported`, `extension_missing`, `config_disabled`)
+  instead of silently omitting them. Unscoped exports also synthesise
+  the file from `query_runs` rather than emitting an empty list.
+- Skipped/failed runs no longer advance cadence: only `status='success'`
+  rows count toward the next-due time, so transient failures and
+  gating misconfigurations are retried on the next cycle instead of
+  being hidden behind a full cadence window.
+- Timeout setup failures now fail collection safely: a `SET LOCAL`
+  failure on `statement_timeout`, `lock_timeout`, or
+  `idle_in_transaction_session_timeout` aborts the cycle rather than
+  warning and continuing without timeout safety.
+- Export integrity hardened: a successful `query_run` whose result is
+  missing or whose payload fails to decode now fails the export with
+  a bounded error instead of silently omitting it.
+- `/status` surfaces database read errors with HTTP 500 instead of
+  returning zero counts that can mask storage failures.
+- `/export` validates `since`/`until` as RFC3339 and rejects inverted
+  ranges with HTTP 400 and bounded JSON error bodies.
+- `retention_days <= 0` documented as cleanup disabled: warning text,
+  schema appendix, and validation behaviour now agree that
+  non-positive values disable cleanup.
+- Savepoint error handling improved: `SAVEPOINT`,
+  `ROLLBACK TO SAVEPOINT`, and `RELEASE SAVEPOINT` failures now abort
+  the cycle with explicit errors instead of being discarded.
+- `sslmode` validation tightened: values outside the libpq enum
+  (`disable`, `allow`, `prefer`, `require`, `verify-ca`,
+  `verify-full`) are rejected at startup. Production TLS still treats
+  only `verify-ca` and `verify-full` as strong.
+- `/collect/now` body size limit added: a 64 KiB cap via
+  `http.MaxBytesReader`. Oversize requests return HTTP 413 with an
+  `error=body_too_large` audit event.
+- Panic recovery now returns JSON: the recovery middleware emits
+  `Content-Type: application/json` so clients that branch on the
+  response content type no longer break on a 500.
+- gitleaks release install now checksum-verified in CI and release
+  workflows: the tarball SHA-256 is checked against the upstream
+  `gitleaks_<version>_checksums.txt` file before extraction.
+
+### Tests
+- 19 new tests in `tests/signals_codex_post_031_test.go` covering
+  every fix above, plus an updated `TestCollectNowLargeBody` for the
+  413 contract.
+
+### Notes
+- No breaking changes.
+- No spec changes.
+- API responses remain backward compatible; new validations only
+  reject previously undefined/invalid input.
+- Docker base image digest pinning remains deferred — `golang:1.25-alpine`
+  and `alpine:3.21` continue to be tag-pinned. The remaining half of
+  L-003 from the Codex review is scheduled for a follow-up that
+  updates the Dockerfile, Trivy baseline, and release-verification
+  doc together.
+- R080 (per-collector export view) is not included in this release.
+
+---
+
 ## [0.3.1] - 2026-04-25
 
 ### Added
