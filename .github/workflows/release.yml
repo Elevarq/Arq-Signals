@@ -125,11 +125,24 @@ jobs:
       # Use the gitleaks binary directly rather than the now-paywalled
       # gitleaks/gitleaks-action wrapper. Same tool, same scan, no
       # licensing surface. Matches the approach in ci.yml so the two
-      # workflows stay consistent.
-      - name: Install gitleaks
+      # workflows stay consistent. Tarball download is verified
+      # against the upstream-published SHA256SUMS file from the same
+      # release so a swapped binary fails the pipeline before it can
+      # run a scan.
+      - name: Install gitleaks (checksum-verified)
+        env:
+          GITLEAKS_VERSION: "8.24.3"
         run: |
-          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz \
-            | tar -xz -C /usr/local/bin gitleaks
+          set -euo pipefail
+          BASE="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+          TARBALL="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          curl -sSfLo "$tmp/$TARBALL"          "$BASE/$TARBALL"
+          curl -sSfLo "$tmp/checksums.txt"     "$BASE/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+          (cd "$tmp" && grep "  $TARBALL\$" checksums.txt | sha256sum -c -)
+          tar -xzf "$tmp/$TARBALL" -C /usr/local/bin gitleaks
+          gitleaks version
 
       - name: Gitleaks detect
         run: gitleaks detect --source . --verbose --exit-code 1

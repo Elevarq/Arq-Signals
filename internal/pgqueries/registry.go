@@ -171,6 +171,50 @@ func HighSensitivityIDs(p FilterParams) []string {
 	return out
 }
 
+// Reason values for GatedIDsByReason. Stable wire constants — they
+// land in collector_status.json and audit events.
+const (
+	GateReasonVersionUnsupported = "version_unsupported"
+	GateReasonExtensionMissing   = "extension_missing"
+	GateReasonConfigDisabled     = "config_disabled"
+)
+
+// GatedIDsByReason returns, for each gating reason, the IDs of
+// registered collectors that are not eligible to run against the
+// connected target. A collector that fails multiple gates appears
+// under exactly one reason, ordered by precedence:
+//
+//  1. version_unsupported — MinPGVersion > p.PGMajorVersion
+//  2. extension_missing  — RequiresExtension is not present
+//  3. config_disabled    — HighSensitivity but not enabled
+//
+// This drives collector_status.json so the operator sees every
+// registered collector accounted for in each cycle, never silently
+// skipped. Output map keys are the constants above; values are
+// sorted ascending by ID. Missing keys mean no collectors were
+// gated for that reason.
+func GatedIDsByReason(p FilterParams) map[string][]string {
+	extSet := make(map[string]bool, len(p.Extensions))
+	for _, e := range p.Extensions {
+		extSet[e] = true
+	}
+	out := map[string][]string{}
+	for _, q := range registry {
+		switch {
+		case q.MinPGVersion > 0 && p.PGMajorVersion < q.MinPGVersion:
+			out[GateReasonVersionUnsupported] = append(out[GateReasonVersionUnsupported], q.ID)
+		case q.RequiresExtension != "" && !extSet[q.RequiresExtension]:
+			out[GateReasonExtensionMissing] = append(out[GateReasonExtensionMissing], q.ID)
+		case q.HighSensitivity && !p.HighSensitivityEnabled:
+			out[GateReasonConfigDisabled] = append(out[GateReasonConfigDisabled], q.ID)
+		}
+	}
+	for k := range out {
+		sort.Strings(out[k])
+	}
+	return out
+}
+
 // ByID returns the query with the given ID, or nil if not found.
 func ByID(id string) *QueryDef {
 	return registryByID[id]

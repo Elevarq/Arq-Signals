@@ -591,11 +591,24 @@ func (d *DB) DeleteQueryRunsOlderThan(before string) (int64, error) {
 	return res.RowsAffected()
 }
 
-// GetLastRunTimes returns the most recent successful collected_at per query_id for a target.
+// GetLastRunTimes returns the most recent successful collected_at per
+// query_id for a target. Only status='success' rows advance cadence.
+//
+// Skipped runs (config_disabled / version_unsupported / extension_missing)
+// and failed runs MUST NOT count: cadence is meant to throttle re-attempts
+// of *successful* collection. A skipped or failed run that bumped the
+// timestamp would defer the next legitimate attempt by a full cadence
+// window, masking transient failures and gating misconfigurations
+// behind invisible delays. Codex post-0.3.1 H-003.
+//
+// Legacy fallback: pre-status-column rows where status is empty are
+// counted only when error is empty too — preserves cadence behaviour
+// against databases that never ran the post-0.2 migration.
 func (d *DB) GetLastRunTimes(targetID int64) (map[string]time.Time, error) {
 	rows, err := d.sql.Query(
 		`SELECT query_id, MAX(collected_at) FROM query_runs
-		 WHERE target_id = ? AND error = ''
+		 WHERE target_id = ?
+		   AND (status = 'success' OR (status = '' AND error = ''))
 		 GROUP BY query_id`, targetID)
 	if err != nil {
 		return nil, err

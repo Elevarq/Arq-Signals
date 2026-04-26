@@ -84,21 +84,17 @@ func TestCollectNowJSONNullAndEmpty(t *testing.T) {
 	}
 }
 
-// TestCollectNowLargeBody verifies the daemon doesn't crash, OOM, or
-// panic on a body sized in the hundreds of KB. The current contract
-// is "no explicit MaxBytesReader limit" — this test fixes the
-// existing behaviour (clean handling, returns within time, body is
-// either parsed or rejected as invalid_json). If a future
-// MaxBytesReader is added, this test will need updating to assert
-// 413 / 400 with a payload-too-large category.
-// Traces: ARQ-SIGNALS-R082 / stabilization
+// TestCollectNowLargeBody verifies the daemon refuses oversize
+// request bodies with HTTP 413 instead of buffering them into memory.
+// Codex post-0.3.1 L-001 added http.MaxBytesReader at the handler
+// entry point with a 64 KiB cap; anything larger is rejected before
+// JSON parsing.
+// Traces: ARQ-SIGNALS-R082 / stabilization / Codex L-001
 func TestCollectNowLargeBody(t *testing.T) {
 	handler, cleanup := makeTargetTestHandler(t, twoTargets())
 	defer cleanup()
 
-	// 256 KB JSON body: a giant `request_id` value (well over the
-	// 32-char regex limit) plus valid targets. Exercises the parse
-	// path on a large input.
+	// 256 KiB body — an order of magnitude past the 64 KiB cap.
 	huge := strings.Repeat("a", 256*1024)
 	body := `{"request_id":"` + huge + `","targets":["primary"]}`
 
@@ -108,14 +104,11 @@ func TestCollectNowLargeBody(t *testing.T) {
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
-	// The huge request_id violates `^[A-Za-z0-9_-]{1,32}$` so we
-	// expect a clean 400 with error=invalid_request_id, NOT a panic
-	// or OOM.
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", w.Code)
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413 (oversize body)", w.Code)
 	}
-	if !strings.Contains(w.Body.String(), "request_id") {
-		t.Errorf("response should mention request_id rejection, got: %s", w.Body.String())
+	if !strings.Contains(w.Body.String(), "exceeds") {
+		t.Errorf("response should mention size cap, got: %s", w.Body.String())
 	}
 }
 

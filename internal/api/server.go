@@ -7,6 +7,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -133,9 +134,28 @@ func handleHealth(deps *Deps) http.HandlerFunc {
 
 func handleStatus(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		snapCount, _ := deps.DB.CountSnapshots()
-		targets, _ := deps.DB.GetTargets()
-		instanceID, _ := deps.DB.GetMeta("instance_id")
+		// Codex post-0.3.1 M-002: surface DB read failures as 500
+		// instead of swallowing them with `_`. A silent fallback to
+		// "0 snapshots / 0 targets" makes a wedged SQLite look like
+		// a healthy empty system.
+		snapCount, err := deps.DB.CountSnapshots()
+		if err != nil {
+			slog.Error("status: CountSnapshots failed", "err", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "status read failed"})
+			return
+		}
+		targets, err := deps.DB.GetTargets()
+		if err != nil {
+			slog.Error("status: GetTargets failed", "err", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "status read failed"})
+			return
+		}
+		instanceID, err := deps.DB.GetMeta("instance_id")
+		if err != nil {
+			slog.Error("status: GetMeta(instance_id) failed", "err", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "status read failed"})
+			return
+		}
 
 		var targetInfo []map[string]any
 		for _, t := range targets {
@@ -159,7 +179,12 @@ func handleStatus(deps *Deps) http.HandlerFunc {
 			targetInfo = append(targetInfo, tInfo)
 		}
 
-		queryCatalog, _ := deps.DB.GetQueryCatalog()
+		queryCatalog, err := deps.DB.GetQueryCatalog()
+		if err != nil {
+			slog.Error("status: GetQueryCatalog failed", "err", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "status read failed"})
+			return
+		}
 
 		resp := map[string]any{
 			"instance_id":         instanceID,
@@ -224,9 +249,39 @@ var reasonPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 //
 // actor is always `local_operator` in Phase 2. The
 // `arq_control_plane` actor value is reserved for Phase 3.
+// collectNowMaxBodyBytes caps the /collect/now request body. The legal
+// payload is three short fields (targets array, request_id ≤32 chars,
+// reason ≤64 chars) — even a few hundred targets stays well under
+// 64 KiB. Bigger requests are either malformed or hostile; reject
+// before allocating. Codex post-0.3.1 L-001.
+const collectNowMaxBodyBytes = 64 * 1024
+
 func handleCollectNow(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
+		// Enforce the body-size cap before reading. A MaxBytesError
+		// from io.ReadAll → 413 with bounded JSON; the audit event
+		// still fires so the request is not silently lost.
+		r.Body = http.MaxBytesReader(w, r.Body, collectNowMaxBodyBytes)
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			var maxErr *http.MaxBytesError
+			if errors.As(err, &maxErr) {
+				safety.AuditLog("collect_now_rejected",
+					"actor", actorFromCtx(r.Context()),
+					"error", "body_too_large",
+				)
+				writeJSON(w, http.StatusRequestEntityTooLarge, map[string]any{
+					"error": fmt.Sprintf("request body exceeds %d bytes", collectNowMaxBodyBytes),
+				})
+				return
+			}
+			safety.AuditLog("collect_now_rejected",
+				"actor", actorFromCtx(r.Context()),
+				"error", "body_read_error",
+			)
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "could not read request body"})
+			return
+		}
 		body = bytes.TrimSpace(body)
 
 		var allEnabled []string
@@ -414,6 +469,25 @@ func handleCollectNow(deps *Deps) http.HandlerFunc {
 	}
 }
 
+// exportRejectInvalidTime emits the standard export_completed audit
+// + metrics records for an RFC3339 parse failure on since/until and
+// writes a 400 response. Codex post-0.3.1 M-003.
+func exportRejectInvalidTime(w http.ResponseWriter, deps *Deps, actor string, start time.Time, field, value string) {
+	safety.AuditLog("export_completed",
+		"actor", actor,
+		"status", "failed",
+		"duration_ms", time.Since(start).Milliseconds(),
+		"size_bytes", 0,
+		"error_category", "invalid_time_format",
+	)
+	deps.Metrics.RecordExport("failed", time.Since(start).Seconds())
+	deps.Metrics.RecordExportFailure("invalid_time_format")
+	_ = value // value is intentionally not echoed to avoid log-injection / reflection attacks.
+	writeJSON(w, http.StatusBadRequest, map[string]string{
+		"error": fmt.Sprintf("%s must be RFC3339 (e.g. 2026-01-02T15:04:05Z)", field),
+	})
+}
+
 // requestedTargetsAuditValue returns either the explicit narrowing
 // list or the literal string "all_enabled" so the audit log is
 // unambiguous when the caller omitted `targets`. Keeps the audit
@@ -465,6 +539,42 @@ func handleExport(deps *Deps) http.HandlerFunc {
 				return
 			}
 			opts.TargetID = id
+		}
+
+		// Codex post-0.3.1 M-003: validate since/until as RFC3339 and
+		// reject inverted ranges. Without this the strings flow
+		// straight into SQLite as text comparisons; a typo silently
+		// returns an empty export and the client thinks the time
+		// range was simply empty.
+		var sinceT, untilT time.Time
+		if opts.Since != "" {
+			t, err := time.Parse(time.RFC3339, opts.Since)
+			if err != nil {
+				exportRejectInvalidTime(w, deps, actor, start, "since", opts.Since)
+				return
+			}
+			sinceT = t
+		}
+		if opts.Until != "" {
+			t, err := time.Parse(time.RFC3339, opts.Until)
+			if err != nil {
+				exportRejectInvalidTime(w, deps, actor, start, "until", opts.Until)
+				return
+			}
+			untilT = t
+		}
+		if !sinceT.IsZero() && !untilT.IsZero() && sinceT.After(untilT) {
+			safety.AuditLog("export_completed",
+				"actor", actor,
+				"status", "failed",
+				"duration_ms", time.Since(start).Milliseconds(),
+				"size_bytes", 0,
+				"error_category", "invalid_time_range",
+			)
+			deps.Metrics.RecordExport("failed", time.Since(start).Seconds())
+			deps.Metrics.RecordExportFailure("invalid_time_range")
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "since must be <= until"})
+			return
 		}
 
 		safety.AuditLog("export_requested",
@@ -592,13 +702,16 @@ func (l *tokenRateLimiter) recordSuccess(ip string) {
 	delete(l.attempts, ip)
 }
 
-// recoveryMiddleware catches panics and returns 500.
+// recoveryMiddleware catches panics and returns 500 with a JSON
+// body. Codex post-0.3.1 L-002: previously used http.Error which
+// sets Content-Type: text/plain even when the body content is JSON,
+// breaking clients that branch on the response Content-Type.
 func recoveryMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if rec := recover(); rec != nil {
 				slog.Error("panic recovered", "panic", rec, "path", r.URL.Path)
-				http.Error(w, `{"error":"internal server error"}`, http.StatusInternalServerError)
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 			}
 		}()
 		next.ServeHTTP(w, r)

@@ -451,6 +451,14 @@ func (c *Collector) collectTarget(ctx context.Context, tgt config.TargetConfig, 
 	// Apply timeouts via SET LOCAL inside this transaction. SET LOCAL
 	// ensures timeouts apply to exactly this transaction on this connection
 	// and are automatically reset when the transaction ends.
+	//
+	// These three timeouts are mandatory safety guards: without them a
+	// runaway query, lock conflict, or idle-in-transaction wedge can
+	// hold a backend indefinitely. If SET LOCAL itself fails (the only
+	// realistic causes are permission revocation on the GUC, an aborted
+	// transaction state, or a dropped connection mid-statement) the
+	// safety contract is broken and we must not run diagnostic queries.
+	// Codex post-0.3.1 H-004.
 	stmtTimeoutMs := int(c.queryTimeout.Milliseconds())
 	lockTimeoutMs := 5000 // 5 seconds — conservative default
 	idleTimeoutMs := int(c.targetTimeout.Milliseconds())
@@ -463,7 +471,7 @@ func (c *Collector) collectTarget(ctx context.Context, tgt config.TargetConfig, 
 		{"idle_in_transaction_session_timeout", idleTimeoutMs},
 	} {
 		if _, err := tx.Exec(ctx, fmt.Sprintf("SET LOCAL %s = %d", t.param, t.value)); err != nil {
-			slog.Warn("failed to SET LOCAL timeout", "param", t.param, "target", tgt.Name, "err", err)
+			return fmt.Errorf("set %s for %s: %w (timeout safety cannot be enforced; aborting cycle)", t.param, tgt.Name, err)
 		}
 	}
 
@@ -474,6 +482,16 @@ func (c *Collector) collectTarget(ctx context.Context, tgt config.TargetConfig, 
 		return fmt.Errorf("discovery for %s: %w", tgt.Name, err)
 	}
 	versionStr := disc.ServerVersion
+
+	// Fail closed when the server is older than the supported window.
+	// We have no per-major catalog files for PG < MinSupportedMajor and
+	// no realistic test surface, so running against such targets risks
+	// silent miscollection. Returning a bounded `version_unsupported`
+	// error makes the failure auditable and surfaces in metrics.
+	if disc.MajorVersion < pgqueries.MinSupportedMajor {
+		return fmt.Errorf("collection blocked for target %s: PostgreSQL major %d is below the supported minimum %d (reason=version_unsupported)",
+			tgt.Name, disc.MajorVersion, pgqueries.MinSupportedMajor)
+	}
 
 	// PG 19+: experimental — no first-class catalog support yet. Fall
 	// back to the highest supported major (PG 18) catalog so collection
@@ -496,7 +514,7 @@ func (c *Collector) collectTarget(ctx context.Context, tgt config.TargetConfig, 
 		HighSensitivityEnabled: c.highSensitivityEnabled,
 	}
 	eligible := pgqueries.Filter(filterParams)
-	gatedHighSensitivityIDs := pgqueries.HighSensitivityIDs(filterParams)
+	gatedByReason := pgqueries.GatedIDsByReason(filterParams)
 
 	// Step 3b: Apply cadence planner unless forceAll.
 	queries := eligible
@@ -547,9 +565,19 @@ func (c *Collector) collectTarget(ctx context.Context, tgt config.TargetConfig, 
 
 		// Use a savepoint so a single query failure does not abort
 		// the entire READ ONLY transaction (PostgreSQL marks the
-		// transaction as aborted after any error).
+		// transaction as aborted after any error). Codex post-0.3.1
+		// M-005: every savepoint operation's error is now checked.
+		// SAVEPOINT failure is fatal — without it the per-query
+		// recovery contract is broken and a downstream failure would
+		// poison the whole cycle. ROLLBACK TO and RELEASE failures
+		// are also fatal because the transaction state is now
+		// inconsistent and continuing risks stale or partial data
+		// reaching the snapshot.
 		savepointName := fmt.Sprintf("arq_q_%d", len(runs))
-		tx.Exec(ctx, "SAVEPOINT "+savepointName)
+		if _, spErr := tx.Exec(ctx, "SAVEPOINT "+savepointName); spErr != nil {
+			qCancel()
+			return fmt.Errorf("savepoint %s for %s: %w", savepointName, tgt.Name, spErr)
+		}
 
 		rows, qErr := queryToMaps(qCtx, tx, q.SQL)
 		elapsed := time.Since(start)
@@ -558,9 +586,13 @@ func (c *Collector) collectTarget(ctx context.Context, tgt config.TargetConfig, 
 
 		if qErr != nil {
 			// Roll back to the savepoint to recover the transaction.
-			tx.Exec(ctx, "ROLLBACK TO SAVEPOINT "+savepointName)
+			if _, rbErr := tx.Exec(ctx, "ROLLBACK TO SAVEPOINT "+savepointName); rbErr != nil {
+				return fmt.Errorf("rollback to savepoint %s for %s: %w (transaction state inconsistent after query error: %v)", savepointName, tgt.Name, rbErr, qErr)
+			}
 		}
-		tx.Exec(ctx, "RELEASE SAVEPOINT "+savepointName)
+		if _, relErr := tx.Exec(ctx, "RELEASE SAVEPOINT "+savepointName); relErr != nil {
+			return fmt.Errorf("release savepoint %s for %s: %w", savepointName, tgt.Name, relErr)
+		}
 
 		runID := ulid.MustNew(ulid.Timestamp(now), c.entropy).String()
 
@@ -626,23 +658,34 @@ func (c *Collector) collectTarget(ctx context.Context, tgt config.TargetConfig, 
 		return fmt.Errorf("commit tx for %s: %w", tgt.Name, err)
 	}
 
-	// Step 4b: Record gated high-sensitivity collectors as skipped runs so
+	// Step 4b: Record gated collectors as skipped runs so
 	// collector_status.json contains exactly one entry per registered
-	// collector that was relevant to this target. The operator can see the
-	// gate is active without having to compare against the registry.
-	for _, id := range gatedHighSensitivityIDs {
-		runID := ulid.MustNew(ulid.Timestamp(now), c.entropy).String()
-		runs = append(runs, db.QueryRun{
-			ID:          runID,
-			TargetID:    targetID,
-			SnapshotID:  snapID,
-			QueryID:     id,
-			CollectedAt: collectedAt,
-			PGVersion:   versionStr,
-			CreatedAt:   collectedAt,
-			Status:      "skipped",
-			Reason:      "config_disabled",
-		})
+	// collector that was relevant to this target. Without this the
+	// status file is silent about why a collector did not run — the
+	// operator has to compare against the registry to notice. Reasons:
+	// version_unsupported (MinPGVersion gate), extension_missing
+	// (required extension not present), config_disabled (R075
+	// high-sensitivity gate). Each collector appears under exactly one
+	// reason; precedence is enforced by GatedIDsByReason.
+	for _, reason := range []string{
+		pgqueries.GateReasonVersionUnsupported,
+		pgqueries.GateReasonExtensionMissing,
+		pgqueries.GateReasonConfigDisabled,
+	} {
+		for _, id := range gatedByReason[reason] {
+			runID := ulid.MustNew(ulid.Timestamp(now), c.entropy).String()
+			runs = append(runs, db.QueryRun{
+				ID:          runID,
+				TargetID:    targetID,
+				SnapshotID:  snapID,
+				QueryID:     id,
+				CollectedAt: collectedAt,
+				PGVersion:   versionStr,
+				CreatedAt:   collectedAt,
+				Status:      "skipped",
+				Reason:      reason,
+			})
+		}
 	}
 
 	// Build the legacy monolithic snapshot.
@@ -757,6 +800,10 @@ func classifyCollectionFailure(err error) string {
 	switch {
 	case strings.HasPrefix(msg, "connect "):
 		return "connect_error"
+	case strings.Contains(msg, "version_unsupported"):
+		return "version_unsupported"
+	case strings.Contains(msg, "timeout safety cannot be enforced"):
+		return "timeout_setup"
 	case strings.Contains(msg, "safety validation failed") ||
 		strings.Contains(msg, "collection blocked"):
 		return "safety_check"

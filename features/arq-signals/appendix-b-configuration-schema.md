@@ -24,7 +24,7 @@ env: dev
 # Collector settings
 signals:
   poll_interval: 5m         # Collection cycle interval (duration string)
-  retention_days: 30         # Days to retain collected data
+  retention_days: 30         # Days to retain collected data; 0 or negative disables cleanup
   log_level: info            # debug, info, warn, error
   log_json: false            # Output logs as JSON
   max_concurrent_targets: 4  # Max targets collected in parallel
@@ -188,8 +188,9 @@ starting any collection. Validation produces two outcomes:
   (`password_file`, `password_env`, `pgpass_file` are mutually
   exclusive).
 - Duplicate target `name` across the targets list.
-- Non-positive `poll_interval`, `target_timeout`, `query_timeout`,
-  or `retention_days` < 0.
+- Non-positive `poll_interval`, `target_timeout`, or `query_timeout`.
+  (`retention_days` <= 0 is allowed and disables cleanup — see
+  warnings below.)
 - Empty `database.path`.
 - Empty `api.listen_addr`.
 - Invalid integer or boolean value in any `ARQ_SIGNALS_*` environment
@@ -208,7 +209,8 @@ starting any collection. Validation produces two outcomes:
 - `sslmode=prefer` on a target outside `prod` (recommend `verify-ca`
   or `verify-full`).
 - `poll_interval` < 30 seconds (very frequent collection).
-- `retention_days` = 0 (snapshots deleted immediately on next cycle).
+- `retention_days` <= 0 (cleanup disabled — snapshots and query runs
+  retained indefinitely; the daemon does not delete on its own).
 - No targets configured (collector starts but does nothing).
 
 The daemon logs warnings and proceeds. Hard errors abort with a
