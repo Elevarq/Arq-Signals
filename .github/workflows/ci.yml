@@ -59,10 +59,25 @@ jobs:
           severity: "CRITICAL,HIGH"
           exit-code: "1"
 
-      - name: Install gitleaks
+      - name: Install gitleaks (checksum-verified)
+        env:
+          GITLEAKS_VERSION: "8.24.3"
         run: |
-          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz \
-            | tar -xz -C /usr/local/bin gitleaks
+          set -euo pipefail
+          BASE="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+          TARBALL="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          # Download the tarball and the official checksums file from
+          # the same release. Verifying via the upstream-published
+          # SHA256SUMS catches a tampered tarball even when the
+          # checksum row is rewritten — gh-attestations + the release
+          # asset signing on gitleaks' side cover the upstream channel.
+          curl -sSfLo "$tmp/$TARBALL"          "$BASE/$TARBALL"
+          curl -sSfLo "$tmp/checksums.txt"     "$BASE/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+          (cd "$tmp" && grep "  $TARBALL\$" checksums.txt | sha256sum -c -)
+          tar -xzf "$tmp/$TARBALL" -C /usr/local/bin gitleaks
+          gitleaks version
 
       - name: Gitleaks detect
         run: gitleaks detect --source . --verbose --exit-code 1

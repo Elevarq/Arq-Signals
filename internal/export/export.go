@@ -151,18 +151,34 @@ func (b *Builder) writeCollectorStatus(zw *zip.Writer, opts Options) error {
 		return json.NewEncoder(f).Encode(file)
 	}
 
-	// Instance-level: use provided status or empty
+	// Instance-level: use the explicitly-supplied status if any.
 	if b.collectorStatus != nil {
 		b.collectorStatus.Sort()
 		return json.NewEncoder(f).Encode(b.collectorStatus)
 	}
 
-	empty := collector.CollectorStatusFile{
+	// Unscoped export with no caller-supplied status: synthesise from
+	// the query_runs table (Codex post-0.3.1 H-002). The legacy
+	// behaviour was to write an empty collectors[] array even when
+	// matching query runs existed, which made auditors believe nothing
+	// had been collected. Synthesising from runs keeps the file
+	// non-empty whenever the cycles actually persisted runs. We make
+	// no attempt to dedupe across targets — collectors that ran
+	// against multiple targets appear once per target/run.
+	runs, err := b.store.GetAllQueryRuns(opts.Since, opts.Until)
+	if err != nil {
+		return err
+	}
+	file := collector.CollectorStatusFile{
 		SchemaVersion: CollectorStatusSchemaVersion,
 		CollectedAt:   time.Now().UTC().Format(time.RFC3339),
-		Collectors:    []collector.CollectorStatus{},
+		Collectors:    collector.BuildStatusFromRuns(runs),
 	}
-	return json.NewEncoder(f).Encode(empty)
+	if file.Collectors == nil {
+		file.Collectors = []collector.CollectorStatus{}
+	}
+	file.Sort()
+	return json.NewEncoder(f).Encode(file)
 }
 
 func (b *Builder) resolveTargetName(targetID int64) string {
@@ -242,16 +258,32 @@ func (b *Builder) writeQueryResults(zw *zip.Writer, opts Options) error {
 
 	enc := json.NewEncoder(f)
 	for _, r := range runs {
-		if r.Error != "" {
+		// Skipped and failed runs legitimately have no payload.
+		// Anything not status='success' (with the legacy fallback for
+		// pre-status rows where status is empty and error is empty)
+		// is allowed to be silently absent.
+		isSuccess := r.Status == "success" || (r.Status == "" && r.Error == "")
+		if !isSuccess {
 			continue
 		}
+
 		res, err := b.store.GetQueryResultByRunID(r.ID)
-		if err != nil || res == nil {
-			continue
+		if err != nil {
+			return fmt.Errorf("read result for run %s: %w", r.ID, err)
+		}
+		// A successful run that has no result payload is a data
+		// integrity failure: InsertCollectionAtomic guarantees the
+		// pair lands together, so a missing partner means the row
+		// was deleted out of band or the storage corrupted. Codex
+		// post-0.3.1 M-001 — fail the export instead of silently
+		// dropping the row, otherwise audits believe collection
+		// produced no data when it actually did.
+		if res == nil {
+			return fmt.Errorf("missing result payload for successful run %s (query_id=%s)", r.ID, r.QueryID)
 		}
 		decoded, err := db.DecodeNDJSON(res.Payload, res.Compressed)
 		if err != nil {
-			continue
+			return fmt.Errorf("decode result for run %s (query_id=%s): %w", r.ID, r.QueryID, err)
 		}
 		row := map[string]any{
 			"run_id":  r.ID,

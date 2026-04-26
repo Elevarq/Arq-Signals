@@ -232,7 +232,7 @@ func TestConfigSingleTargetDefaultName(t *testing.T) {
 func TestConfigValidateCatchesIssues(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Signals.PollInterval = 5 * time.Second // too short
-	cfg.Signals.RetentionDays = 0              // deletes immediately
+	cfg.Signals.RetentionDays = 0              // disables cleanup
 	cfg.Database.Path = ""                     // empty
 	cfg.API.ListenAddr = ""                    // empty
 	cfg.Targets = nil                          // no targets
