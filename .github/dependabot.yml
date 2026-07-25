@@ -21,7 +21,7 @@ updates:
       interval: weekly
       day: monday
       time: "02:00"
-      timezone: "Europe/Amsterdam"
+      timezone: "America/Los_Angeles"
     open-pull-requests-limit: 5
     labels:
       - area:tooling
@@ -48,7 +48,7 @@ updates:
       interval: weekly
       day: monday
       time: "02:00"
-      timezone: "Europe/Amsterdam"
+      timezone: "America/Los_Angeles"
     open-pull-requests-limit: 5
     labels:
       - area:tooling
