@@ -34,8 +34,9 @@ on:
     # Weekly, Monday 05:09 UTC — portfolio scheme: all repos run their
     # deep scan Monday early UTC, staggered 6 minutes apart (Analyzer
     # 05:03, Signals 05:09, Workbench 05:15, pgAgroal-Enterprise 05:21)
-    # so results are ready before the Monday-morning cleanup
-    # (Europe/Amsterdam) and simultaneous Grype DB pulls don't collide.
+    # (Sunday ~22:09 America/Los_Angeles) so results are ready before
+    # the Pacific Monday-morning cleanup and simultaneous Grype DB
+    # pulls don't collide.
     # Daily cadence dropped to conserve Actions minutes.
     - cron: "9 5 * * 1"
   workflow_dispatch: {}
