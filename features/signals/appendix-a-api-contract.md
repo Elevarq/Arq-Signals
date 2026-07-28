@@ -453,3 +453,44 @@ consumers:
   the collector SQL casts them `::text`. *Rationale: an uncast
   `contype` serialized as `102` instead of `"f"`, so the analyzer's
   `contype == "f"` check failed and every FK constraint was skipped.*
+
+## Collector output-contract verification (#314)
+
+The invariants above are only trustworthy if a test executes the
+collectors against a real PostgreSQL and inspects the bytes that land
+in the exported snapshot. The `pgqueries` unit tests are static
+(registration, read-only linting, ordering) — the SQL is never run, so
+the entire `"char"`-class defect (#312) was invisible until it surfaced
+live. The following invariants require an integration harness that
+collects → exports a snapshot ZIP → reads it back and asserts the
+per-collector output contract.
+
+- **INV-OUTPUT-CONTRACT.** For each catalog/schema collector, the
+  columns it declares in its spec (`specifications/collectors/<id>.md`
+  *Output columns* table) MUST be present in the `query_results`
+  payload objects in the exported snapshot ZIP when the collector runs
+  against a target carrying representative schema. Absence of a
+  declared column in a non-empty payload is a contract violation.
+  *Rationale: a consumer (the Analyzer) reads declared columns by name;
+  a silently dropped or renamed column produces `no_evidence` with no
+  signal.*
+
+- **INV-CHAR-TEXT-VERIFIED.** The `INV-CHAR-TEXT` guarantee MUST be
+  verified against the exported bytes, not only asserted in the SQL: in
+  the `query_results` payload, every internal-`"char"` column
+  (`contype`, `relkind`, `relpersistence`, `provolatile`, `prokind`)
+  MUST decode as a single-character **string**, never a JSON number. In
+  particular, a target with an unindexed foreign key MUST yield a
+  `pg_constraints_v1` payload row whose `contype == "f"` (the exact
+  `#312` regression: an uncast column serialized `contype` as `102`).
+  *Rationale: this is the permanent lock on the `#312` class — the test
+  goes RED on the pre-`#313` code and GREEN after.*
+
+- **INV-STATUS-PAYLOAD-VERIFIED.** `INV-SNAP-STATUS-PAYLOAD` MUST be
+  verified end-to-end through the export: for every `query_runs` entry
+  in the exported ZIP with `status=success` and `row_count=N`, there
+  MUST be exactly one `query_results` payload joinable by `run_id`
+  whose `payload` array contains exactly `N` objects. *Rationale: the
+  status manifest and the data payload cannot be shown to agree by unit
+  tests alone — only a round-trip through the real collect+export path
+  proves it.*

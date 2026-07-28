@@ -259,3 +259,28 @@ Spec: `specifications/collector-inventory.md` (ACTIVE). A committed, machine-rea
 | R122 (contract version) | `contract_version` = 1 gates the document schema; changes are deliberate spec amendments | `TestCollectorInventoryCanonicalEncoding` | COVERED | BEHAVIORAL | TC-CINV-02. |
 | R123 (#293) | Decision-grade index health (`index_health_summary_v2`) | TC-IHV2-01..14 (`tests/signals_index_health_summary_v2_test.go`) | COVERED | BEHAVIORAL | Additive collector in `internal/pgqueries/catalog_index_health.go`; v1 (R103) unchanged. One row per non-system index with explicit safety/constraint/build state and a versioned semantic structure fingerprint. Usage counters (`idx_scan`/`idx_tup_read`/`idx_tup_fetch`) and state booleans emitted raw — never `COALESCE`d to 0/false (R-IHV2-01). Constraint backing from `pg_constraint.conindid` -> controlled `primary`/`unique`/`exclusion`/`other`; `build_state` from `pg_stat_progress_create_index` (reindex vs build via `left(command,2)='RE'`, avoiding the `CREATE`/`REINDEX` linter keywords) distinguishing active build from `invalid_residue`/`not_ready_residue`. `structure_fingerprint` = `md5` over a name/table-independent normalization of `pg_get_indexdef` plus uniqueness/exclusion facts; `exact_duplicate_of` set only on full fingerprint equality (R-IHV2-05), `prefix_candidate_of` a labelled review candidate, never a drop verdict (R-IHV2-06). System schemas excluded (INV-SIGNALS-12); deterministic order; passes the linter; PG14-18 (live-validated on 14 and 18). Unblocks Elevarq/Analyzer#1596. Spec: `specifications/collectors/index_health_summary_v2.md`. |
 | R124 (#294) | Concurrent-DDL capability evidence in `index_health_summary_v2` | TC-IHV2-15 + TC-IHV2-04 (`tests/signals_index_health_summary_v2_test.go`) | COVERED | BEHAVIORAL | Extends R123: `index_health_summary_v2` emits `relation_kind` (controlled `index`/`partitioned_index`/`other`) and a strict `is_partitioned` boolean from `pg_class.relkind` (`'I'` -> partitioned parent index -> `is_partitioned = true`; `'i'` -> ordinary / partition-local -> false). `relkind` is NOT NULL so the fact is always known, never synthesized as false (R-IHV2-08). The analyzer requires `is_partitioned = false` before `DROP INDEX CONCURRENTLY` (unsupported on partitioned indexes; https://www.postgresql.org/docs/current/sql-dropindex.html). Partition-local indexes are distinguished from the partitioned parent. Live-validated on PG18 with a partitioned table + parent index + partition-local indexes + an ordinary index. Required by Elevarq/Analyzer#1596. Spec: `specifications/collectors/index_health_summary_v2.md`. |
+
+## Collector output-contract verification (#314)
+
+Spec: `specifications/collector-output-contract.md` (ACTIVE), with the
+supporting invariants in `features/signals/appendix-a-api-contract.md`
+§"Collector output-contract verification (#314)" (INV-OUTPUT-CONTRACT,
+INV-CHAR-TEXT-VERIFIED, INV-STATUS-PAYLOAD-VERIFIED). The missing STDD
+`tests → artifact` link: a live-PG integration harness that runs the
+full collection against a real PostgreSQL carrying representative schema
+(parent + child with an unindexed FK), exports a snapshot ZIP via the
+production `export.Builder.WriteTo` path, reads it back, and asserts the
+per-collector output contract for the catalog/schema collectors. This
+locks the #312 internal-`"char"` class permanently — the `contype == "f"`
+assertion is RED on pre-#313 uncast SQL and GREEN after. Test:
+`tests/signals_collector_output_contract_integration_test.go`
+(`//go:build integration`, `SIGNALS_TEST_PG_DSN`-gated); runs in the CI
+PG-version matrix 14/15/16/17/18. Acceptance:
+`specifications/collector-output-contract.acceptance.md`.
+
+| Rule ID | Rule Summary | Test ID(s) | Coverage Status | Evidence Type | Notes |
+|---------|-------------|------------|-----------------|---------------|-------|
+| OC-R001 (collect against live PG) | Full collection runs against a real PostgreSQL target and exports a snapshot ZIP via the production export path | `TestIntegration_CollectorOutputContractAgainstRealPG` | COVERED | INTEGRATION | `//go:build integration` + `SIGNALS_TEST_PG_DSN`; CI matrix PG 14-18. Not in default unit CI. |
+| OC-R002 (declared columns present) | Each catalog/schema collector's spec-declared columns appear in its `query_results` payload objects | `TestIntegration_CollectorOutputContractAgainstRealPG` | COVERED | INTEGRATION | TC-OC-03; INV-OUTPUT-CONTRACT. |
+| OC-R003 (char-type is text) | Internal-`"char"` columns (`contype`/`relkind`/`relpersistence`/`provolatile`/`prokind`) decode as single-char strings; seeded FK yields `contype == "f"` | `TestIntegration_CollectorOutputContractAgainstRealPG` | COVERED | INTEGRATION | TC-OC-01/02; INV-CHAR-TEXT-VERIFIED; the #312 regression lock. Also caught + fixed an uncast `pg_class_storage_v1.relpersistence` residual. |
+| OC-R004 (status↔payload joinable) | Every exported `status=success`/`row_count=N` run has exactly one joinable payload with N objects | `TestIntegration_CollectorOutputContractAgainstRealPG` | COVERED | INTEGRATION | TC-OC-04; INV-STATUS-PAYLOAD-VERIFIED; end-to-end proof of INV-SNAP-STATUS-PAYLOAD (#312). |

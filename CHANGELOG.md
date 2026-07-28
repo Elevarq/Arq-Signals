@@ -6,6 +6,24 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Collector output-contract verification against a live PostgreSQL: an
+  `integration`-tagged test seeds representative schema (parent + child
+  with an unindexed FK), runs the full collection, exports a snapshot ZIP
+  via the production export path, and asserts the per-collector output
+  contract — internal-`"char"` columns serialize as single-char strings
+  (the `contype == "f"` regression lock for #312), spec-declared columns
+  are present, and the status↔payload invariant holds end-to-end. Runs in
+  a new CI job matrixed across PG 14/15/16/17/18 (#314).
+
+### Fixed
+
+- `pg_class_storage_v1` emitted `relpersistence` uncast, so pgx scanned
+  the internal `"char"` as a byte integer (`112`/`117`/`116`) instead of
+  `p`/`u`/`t` — a residual of the #312 class the new #314 harness caught.
+  Now cast `::text` like the other char columns (#314).
+
 ## [1.1.0] - 2026-07-22
 
 ### Added
