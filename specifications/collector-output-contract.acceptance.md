@@ -56,25 +56,32 @@ collectors is inspected in the exported payload.
 
 ---
 
-### TC-OC-03: Declared columns present in the payload
+### TC-OC-03: Declared columns present in the payload (ALL collectors)
 
 **Rule:** OC-R002 (normal)
 
-**Scenario:** For each catalog/schema collector that produced rows, the
-columns its spec declares are checked against the payload objects.
+**Scenario:** For **each registered collector** (#316 — not only the
+catalog/schema ones) that produced rows, the columns its spec declares
+are checked against the payload objects. The declared column set is
+derived from the spec at test time (`## Output columns` table[s]), never
+hand-copied.
 
 **Given:**
 - A collected + exported snapshot ZIP; the per-collector declared
-  column sets for the char-type catalog collectors.
+  column sets derived from `specifications/collectors/<id>.md`
+  (or the parent spec for definition-mode / MCV family variants).
 
 **When:**
-- Each non-empty catalog/schema payload is inspected.
+- Each non-empty payload is inspected.
 
 **Then:**
-- Every declared column for that collector is present in each payload
-  object.
+- Every spec-declared column for that collector is present in each
+  payload object. Column-dynamic collectors (`SELECT *`,
+  version-variant, scalar) are checked for row presence only.
 
-**Expected Result:** Pass.
+**Expected Result:** Pass; RED if a declared column is dropped or
+renamed while the spec keeps it (verified by a mutation spot-check on
+`pg_indexes_v1.indexname`).
 (`TestIntegration_CollectorOutputContractAgainstRealPG`)
 
 ---
@@ -222,4 +229,36 @@ skip otherwise.
   service container it RUNS across PG 14/15/16/17/18.
 
 **Expected Result:** Skip locally, run in CI.
+(`TestIntegration_CollectorOutputContractAgainstRealPG`)
+
+---
+
+### TC-OC-09: Every collector is accounted for (no silent coverage gap)
+
+**Rule:** OC-R008 (normal / boundary — the #316 completeness gate)
+
+**Scenario:** After collection + export, every registered collector is
+classified: rows-asserted, column-dynamic row-presence, or zero-row
+allowlisted with a reason. A collector emitting no rows that is not
+allowlisted fails.
+
+**Given:**
+- A collected + exported snapshot ZIP and the full registry
+  (`pgqueries.All()`).
+
+**When:**
+- Each registered collector is looked up in the exported payloads.
+
+**Then:**
+- A collector with a non-empty payload has its declared columns
+  asserted (or its row presence, when column-dynamic).
+- A collector with no rows is present in the zero-row allowlist with a
+  documented reason; otherwise the harness fails naming the
+  unclassified collector(s).
+- The harness logs a coverage report: the asserted count and the
+  enumerated not-exercised allowlist.
+
+**Expected Result:** Pass when every collector is classified; RED with a
+descriptive failure if a new collector emits no rows and is not
+allowlisted.
 (`TestIntegration_CollectorOutputContractAgainstRealPG`)

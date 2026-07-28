@@ -1,8 +1,10 @@
 # Collector Output-Contract Verification — Behavioral Specification
 
-Spec version: 1.0
+Spec version: 1.1
 Status: ACTIVE
 Issue: [Elevarq/Signals#314](https://github.com/Elevarq/Signals/issues/314)
+Extended by: [Elevarq/Signals#316](https://github.com/Elevarq/Signals/issues/316)
+(declared-column completeness across ALL collectors)
 
 ## Purpose
 
@@ -24,16 +26,31 @@ the ZIP back, and asserts the per-collector output contract. It locks
 the #312 class permanently — the assertions go RED on pre-#313 code and
 GREEN after.
 
-Scope is the **catalog/schema collectors** (`Category == "schema"`),
-with emphasis on the internal-`"char"` collectors PR #313 touched
-(`pg_constraints_v1`, `pg_class_storage_v1`, `pg_functions_v1`,
-`pg_functions_definitions_v1`, `pg_proc_config_v1`) **and the remaining
-schema collectors that alias an internal-`"char"` column** but were not
-exercised by the #314 fixtures (#326): `pg_partitions_v1`
-(`partition_strategy`), `pg_triggers_v1` / `pg_triggers_definitions_v1`
-(`tg_enabled`), and `fdw_foreign_tables_v1` (`relkind`). The remaining
-non-schema collectors are an explicit fast-follow (see
-Non-Functional Requirements).
+Scope (#314/#326) began with the **catalog/schema collectors**
+(`Category == "schema"`), with emphasis on the internal-`"char"`
+collectors PR #313 touched (`pg_constraints_v1`, `pg_class_storage_v1`,
+`pg_functions_v1`, `pg_functions_definitions_v1`, `pg_proc_config_v1`)
+**and the remaining schema collectors that alias an internal-`"char"`
+column** but were not exercised by the #314 fixtures (#326):
+`pg_partitions_v1` (`partition_strategy`), `pg_triggers_v1` /
+`pg_triggers_definitions_v1` (`tg_enabled`), and
+`fdw_foreign_tables_v1` (`relkind`).
+
+**#316 closes the fast-follow: the per-collector declared-column
+assertion (OC-R002 / OC-R008) now covers EVERY registered collector,
+not only the schema ones.** For each collector that emits rows against
+the seeded live PG, its declared output columns — derived from the
+authoritative spec `## Output columns` table(s), never a hand-copied
+list — are asserted present in the exported payload. Collectors that
+legitimately emit no rows in the test environment (needing concurrent
+sessions, in-flight operations, replication, an uninstalled extension,
+a privilege the `pg_monitor` role lacks, or a rare catalog object) are
+recorded in an explicit **zero-row allowlist** with a per-collector
+reason; a collector emitting no rows that is NOT allowlisted fails the
+harness, so coverage is honest and a newly-added collector cannot slip
+through unclassified (OC-R008). Column-dynamic collectors (`SELECT *`,
+version-variant, or scalar) are asserted for row presence only, since a
+fixed declared-column list cannot apply.
 
 This spec complements `appendix-a-api-contract.md` §"Snapshot
 data-integrity invariants (#312)" (INV-SNAP-STATUS-PAYLOAD, INV-CHAR-TEXT)
@@ -118,9 +135,18 @@ and §"Collector output-contract verification (#314)"
   collection cycle against a real PostgreSQL target, not a mock, and
   export a snapshot ZIP via the production export path
   (`export.Builder.WriteTo`) — never a hand-built payload.
-- **OC-R002 — Declared columns present.** For each catalog/schema
-  collector whose exported payload is non-empty, every column its spec
-  declares shall appear in each payload object. (INV-OUTPUT-CONTRACT.)
+- **OC-R002 — Declared columns present.** For **each registered
+  collector** (not only the catalog/schema ones — #316) whose exported
+  payload is non-empty, every column its spec declares shall appear in
+  each payload object. The declared column set shall be **derived from
+  the authoritative spec** (`specifications/collectors/<id>.md`
+  `## Output columns` table(s), or the parent spec for the
+  definition-mode / MCV family variants), never hand-copied into the
+  test, so it cannot drift from the spec. Column-dynamic collectors
+  (`SELECT *`, version-variant, or scalar — e.g. `bgwriter_stats_v1`,
+  `pg_version_v1`, the TimescaleDB family) are exempt from the fixed
+  column check and asserted for row presence only.
+  (INV-OUTPUT-CONTRACT.)
 - **OC-R003 — Char-type is text.** Every internal-`"char"` column
   (`contype`, `relkind`, `relpersistence`, `provolatile`, `prokind`)
   present in a payload shall decode as a single-character string, never
@@ -170,6 +196,17 @@ and §"Collector output-contract verification (#314)"
   When the capability is absent (no superuser provisioning of the
   extension/server) the FDW assertion is skipped with a documented
   reason; the OC-R006 schema-collector assertions still run. (#326.)
+- **OC-R008 — No silent coverage gap.** Every registered collector
+  shall be accounted for by the harness: it either (a) emits rows and
+  has its declared columns asserted (OC-R002), (b) is column-dynamic
+  and has its row presence asserted, or (c) emits no rows in the test
+  environment and is listed in the **zero-row allowlist** with a
+  documented reason (contention, in-flight operation, replication,
+  uninstalled extension, insufficient privilege, or rare catalog
+  object). A collector that emits no rows and is NOT allowlisted shall
+  fail the harness. The harness shall emit a coverage report recording
+  the asserted count and the enumerated not-exercised allowlist, so
+  what is and is not exercised is explicit and auditable. (#316.)
 
 ## Invariants
 
@@ -203,6 +240,13 @@ and §"Collector output-contract verification (#314)"
   `GRANT USAGE`; collection itself still runs as the non-superuser
   collector role (INV-02 holds — no writes and no superuser during
   collection).
+- **INV-07** — The declared-column set the harness asserts (OC-R002)
+  is derived from the spec at test time, so it can never silently
+  diverge from the spec: renaming or dropping a spec-declared output
+  column while leaving the SQL alias unchanged (or vice versa) turns
+  the assertion RED. The zero-row allowlist (OC-R008) is exhaustive
+  over the not-exercised collectors — a collector may be absent from
+  it only if it emits rows.
 
 ## Failure conditions
 
@@ -217,6 +261,11 @@ and §"Collector output-contract verification (#314)"
   capability is present, `fdw_foreign_tables_v1.relkind`) decoding as a
   JSON number, or one of the seeded schema collectors emitting no such
   value at all, fails OC-R006 / OC-R007.
+- **FC-05** — A registered collector that emits no rows and is absent
+  from the zero-row allowlist fails OC-R008 (unclassified coverage
+  gap). A collector whose spec has no `## Output columns` table and no
+  column-dynamic classification also fails OC-R002 (underivable
+  contract) rather than being silently skipped.
 
 ## Constraints
 
@@ -229,7 +278,10 @@ and §"Collector output-contract verification (#314)"
 
 - **NFR-01 — Version coverage.** The harness runs across PG
   14/15/16/17/18 in CI so version-gated column/type differences surface.
-- **NFR-02 — Fast-follow scope.** This spec covers catalog/schema
-  collectors. Sweeping the remaining (~80) non-schema collectors under
-  the same output-contract harness is an explicit follow-up, to be
-  filed as a child issue of #314.
+- **NFR-02 — Full-collector scope (DELIVERED #316).** The
+  declared-column assertion now covers the whole registry, not only the
+  catalog/schema collectors. Of the ~100 registered collectors, those
+  that emit rows against the seeded live PG have their declared columns
+  asserted (or their row presence, for the column-dynamic ones); the
+  remainder are enumerated in the zero-row allowlist with reasons
+  (OC-R008). The original #314 fast-follow is closed.

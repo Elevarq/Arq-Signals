@@ -291,13 +291,46 @@ seeds a foreign table and asserts `fdw_foreign_tables_v1.relkind == "f"`;
 without the capability that leg is a documented skip (OC-R007). This is
 test-only — the production normalization already landed in #319/#321.
 
+#316 closes the #314 fast-follow (NFR-02): the per-collector
+declared-column assertion (OC-R002) now spans the whole registry, not
+only the schema collectors. The declared columns are derived from each
+collector's spec `## Output columns` table at test time (a spec parser
++ a family-source map for the definition-mode / MCV variants), so the
+assertion can never drift from the spec (INV-07). New cheap fixtures (a
+view, materialized view, enum + composite type, RLS policy, extended
+statistics, a SET-config function, a user rule) lift the schema
+collectors that were previously zero-row into the asserted set. Every
+collector that still emits no rows in the test environment is
+enumerated in an explicit **zero-row allowlist** with a per-collector
+reason — contention (`blocking_locks_v1`, `pg_locks_summary_v1`, …),
+in-flight operations (`pg_stat_progress_*`), replication
+(`replication_status_v1`, …), uninstalled extensions
+(`pg_stat_statements_v1`, `pg_vector_columns_v1`, the `timescaledb_*`
+family), privilege the `pg_monitor` role lacks
+(`pg_statistic_ext_data_v1` / `_mcv_v1`), a non-default GUC
+(`pg_prepared_xacts_v1`), or rare user-only catalog objects
+(`pg_operators_v1`, `pg_aggregates_v1`, `pg_casts_v1`,
+`pg_collations_v1`, `pg_text_search_v1`, `fdw_user_mappings_v1`) — and a
+collector emitting no rows that is NOT allowlisted fails the harness
+(OC-R008), so coverage is honest and a newly-added collector cannot
+slip through unclassified. The assertions are proven real by a mutation
+spot-check: renaming `pg_indexes_v1.indexname`'s SQL alias turns the
+sweep RED. No production output-contract violation was found — the
+`missing column` hits during development were all spec-parsing artifacts
+(definition-mode columns wrongly attributed to inventory collectors, and
+the version-variant/scalar collectors), resolved by the family-source
+map and the column-dynamic classification, not by weakening any
+assertion. Test helper:
+`tests/signals_collector_output_contract_columns.go`.
+
 | Rule ID | Rule Summary | Test ID(s) | Coverage Status | Evidence Type | Notes |
 |---------|-------------|------------|-----------------|---------------|-------|
 | OC-R001 (collect against live PG) | Full collection runs against a real PostgreSQL target and exports a snapshot ZIP via the production export path | `TestIntegration_CollectorOutputContractAgainstRealPG` | COVERED | INTEGRATION | `//go:build integration` + `SIGNALS_TEST_PG_DSN`; CI matrix PG 14-18. Not in default unit CI. |
-| OC-R002 (declared columns present) | Each catalog/schema collector's spec-declared columns appear in its `query_results` payload objects | `TestIntegration_CollectorOutputContractAgainstRealPG` | COVERED | INTEGRATION | TC-OC-03; INV-OUTPUT-CONTRACT. |
+| OC-R002 (declared columns present) | **Every registered collector** (#316 — not only catalog/schema) with a non-empty payload has its spec-derived declared columns (parsed from `specifications/collectors/<id>.md` `## Output columns`, never hand-copied) present in each `query_results` payload object; column-dynamic collectors (`SELECT *`/version-variant/scalar) are row-presence-only | `TestIntegration_CollectorOutputContractAgainstRealPG` | COVERED | INTEGRATION | TC-OC-03; INV-OUTPUT-CONTRACT/INV-07; #316. Mutation-verified RED on a renamed `pg_indexes_v1.indexname` alias. |
 | OC-R003 (char-type is text) | Internal-`"char"` columns (`contype`/`relkind`/`relpersistence`/`provolatile`/`prokind`) decode as single-char strings; seeded FK yields `contype == "f"` | `TestIntegration_CollectorOutputContractAgainstRealPG` | COVERED | INTEGRATION | TC-OC-01/02; INV-CHAR-TEXT-VERIFIED; the #312 regression lock. Also caught + fixed an uncast `pg_class_storage_v1.relpersistence` residual. |
 | OC-R004 (status↔payload joinable) | Every exported `status=success`/`row_count=N` run has exactly one joinable payload with N objects | `TestIntegration_CollectorOutputContractAgainstRealPG` | COVERED | INTEGRATION | TC-OC-04; INV-STATUS-PAYLOAD-VERIFIED; end-to-end proof of INV-SNAP-STATUS-PAYLOAD (#312). |
 | INV-SNAP-STATUS-PAYLOAD (retention producer, #327) | Retention cleanup deletes a run's payload + its run row atomically; a failure after the payload delete leaves BOTH tables intact, so no `success` run is ever stripped of its joinable payload | `internal/db/retention_atomic_test.go` (`TestDeleteQueryRunsOlderThan_AtomicOnSecondStepFailure`, `TestDeleteQueryRunsOlderThanByClass_AtomicOnSecondStepFailure`, `TestDeleteQueryRuns*_InvariantHoldsAfterCleanup`) | COVERED | BEHAVIORAL | FC-23; failure-injection proving the transaction rolls back both deletes on a second-step failure; post-cleanup asserts every remaining `success` run has exactly one joinable payload with `row_count` rows. Covers both the legacy flat helper and the per-class production helper. |
 | OC-R005 (char-type normalized at connection boundary) | OID 18 decodes as text for ALL collectors via a pooled-connection type registration; the columns #313 missed — `relkind` (`catalog_bloat_v1`/`catalog_index_bloat_v1`/`fdw_*_v1`), `provolatile`/`volatility` (functions), `attidentity` (identity, `""` when non-set) — decode as strings, never JSON numbers | `TestIntegration_CollectorOutputContractAgainstRealPG` | COVERED | INTEGRATION | TC-OC-06; INV-04; the #319 central-fix regression lock (root cause of Elevarq/Analyzer#1871). |
 | OC-R006 (char sweep covers remaining schema collectors) | The char whitelist includes the aliases `partition_strategy` (`pg_partitions_v1`), `tg_enabled` (`pg_triggers_v1`/`pg_triggers_definitions_v1`), `volatility` (the **output alias** of `provolatile` in `pg_functions_v1`/`pg_functions_definitions_v1`), and `attidentity`; a seeded partitioned table, trigger, and function make each collector emit a single-char string for its aliased char column, never a JSON number | `TestIntegration_CollectorOutputContractAgainstRealPG` | COVERED | INTEGRATION | TC-OC-07; INV-05; regression-locks #319 across the schema collectors #314 missed (#326). |
 | OC-R007 (FDW char capability-gated) | When a superuser DSN provisions `postgres_fdw` + a foreign server + `GRANT USAGE`, a seeded foreign table makes `fdw_foreign_tables_v1` emit `relkind == "f"` (single-char string, never a number); absent the capability the FDW fixture + assertion are skipped with a documented reason and every other assertion still runs | `TestIntegration_CollectorOutputContractAgainstRealPG` | COVERED | INTEGRATION | TC-OC-08; INV-05/INV-06; capability-gated FDW leg of #326. |
+| OC-R008 (no silent coverage gap) | Every registered collector is accounted for: rows-asserted (OC-R002), column-dynamic row-presence, or zero-row allowlisted with a documented reason; a collector emitting no rows that is NOT allowlisted fails the harness naming it; a coverage report enumerates the asserted count + the not-exercised allowlist | `TestIntegration_CollectorOutputContractAgainstRealPG` | COVERED | INTEGRATION | TC-OC-09; INV-07; #316. Local PG-17 run: 55/100 declared-column-asserted + 2 column-dynamic row-presence; 43 not-exercised (allowlisted with reasons). |
