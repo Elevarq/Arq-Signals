@@ -125,11 +125,14 @@ func TestSavepointErrorsHandled(t *testing.T) {
 	src := readFileString(t, filepath.Join(root, "internal", "collector", "collector.go"))
 
 	// The bare tx.Exec(ctx, "SAVEPOINT/ROLLBACK/RELEASE …") forms
-	// must be gone — error returns must be captured.
+	// must be gone — error returns must be captured. SAVEPOINT runs
+	// under the per-cycle budget ctx (it precedes the query); the
+	// ROLLBACK/RELEASE recovery runs under a bounded fresh context
+	// (spCtx) so it survives an elapsed budget (#329 / SIGNALS-R108).
 	bad := []string{
 		`tx.Exec(ctx, "SAVEPOINT "+savepointName)`,
-		`tx.Exec(ctx, "ROLLBACK TO SAVEPOINT "+savepointName)`,
-		`tx.Exec(ctx, "RELEASE SAVEPOINT "+savepointName)`,
+		`tx.Exec(spCtx, "ROLLBACK TO SAVEPOINT "+savepointName)`,
+		`tx.Exec(spCtx, "RELEASE SAVEPOINT "+savepointName)`,
 	}
 	for _, b := range bad {
 		if strings.Contains(src, "\t"+b+"\n") || strings.Contains(src, "\t\t"+b+"\n") {
@@ -137,16 +140,28 @@ func TestSavepointErrorsHandled(t *testing.T) {
 		}
 	}
 
-	// And the fixed form must be present for each operation.
+	// And the fixed form must be present for each operation. The
+	// ROLLBACK/RELEASE savepoint-recovery ops use the bounded fresh
+	// context (spCtx), never the possibly-elapsed budget ctx — recovering
+	// the transaction must not itself be gated by the exhausted budget
+	// (#329). SAVEPOINT stays on ctx (it runs before the query, while the
+	// budget is still live).
 	good := []string{
 		`spErr := tx.Exec(ctx, "SAVEPOINT "+savepointName)`,
-		`rbErr := tx.Exec(ctx, "ROLLBACK TO SAVEPOINT "+savepointName)`,
-		`relErr := tx.Exec(ctx, "RELEASE SAVEPOINT "+savepointName)`,
+		`rbErr := tx.Exec(spCtx, "ROLLBACK TO SAVEPOINT "+savepointName)`,
+		`relErr := tx.Exec(spCtx, "RELEASE SAVEPOINT "+savepointName)`,
 	}
 	for _, g := range good {
 		if !strings.Contains(src, g) {
 			t.Errorf("collector.go missing checked-error form for savepoint op: %q", g)
 		}
+	}
+
+	// The recovery must derive a fresh, background-derived context — not
+	// the budget ctx — so an over-budget cycle can still roll back and
+	// persist its partial inventory (#329 / SIGNALS-R108).
+	if !strings.Contains(src, `spCtx, spCancel := context.WithTimeout(context.Background()`) {
+		t.Error("collector.go savepoint recovery does not derive a fresh bounded context (spCtx) — an elapsed budget would reject ROLLBACK/RELEASE and discard the partial cycle (#329)")
 	}
 }
 

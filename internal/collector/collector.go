@@ -111,6 +111,20 @@ type Collector struct {
 	// warnKey; guarded by warnedOnceMu.
 	warnedOnceMu sync.Mutex
 	warnedOnce   map[string]struct{}
+
+	// beforeQueryForTest, when non-nil, is invoked immediately before
+	// each collector query runs, with the per-query context, the live
+	// transaction, the collector id, and its real SQL; it returns the
+	// SQL actually executed. It is a test-only seam (wired via
+	// WithBeforeQueryForTest) that lets an execution-faithful
+	// integration test drive one collector into a mid-query
+	// budget-exhaustion state — blocking it until the per-query context
+	// (bounded by the remaining per-cycle budget) is done so the real
+	// query observes an already-expired context and returns a deadline
+	// error with the connection preserved, exercising the savepoint-
+	// recovery path (R108 / #329) against the real transaction. nil in
+	// production; the real SQL runs unchanged.
+	beforeQueryForTest func(qCtx context.Context, tx pgx.Tx, queryID, sql string) string
 }
 
 // CollectRequest is the on-demand cycle payload carried over
@@ -253,6 +267,22 @@ func WithQueryTimeout(d time.Duration) CollectorOption {
 		if d > 0 {
 			c.queryTimeout = d
 		}
+	}
+}
+
+// WithBeforeQueryForTest injects a hook consulted for each collector's
+// query immediately before it executes, receiving the per-query
+// context, the live transaction, the collector id, and its real SQL,
+// and returning the SQL actually run. It is an execution-faithful test
+// seam (#329): a test can block one collector until the per-query
+// context (bounded by the remaining per-cycle budget) is done, so the
+// real query then observes an already-expired context and returns a
+// deadline error WITH THE CONNECTION PRESERVED — exercising the real
+// savepoint-recovery path (R108) against live PostgreSQL. No production
+// caller sets it; production SQL runs unchanged.
+func WithBeforeQueryForTest(hook func(qCtx context.Context, tx pgx.Tx, queryID, sql string) string) CollectorOption {
+	return func(c *Collector) {
+		c.beforeQueryForTest = hook
 	}
 }
 
@@ -1186,20 +1216,38 @@ func (c *Collector) collectTarget(ctx context.Context, tgt config.TargetConfig, 
 			return fmt.Errorf("savepoint %s for %s: %w", savepointName, tgt.Name, spErr)
 		}
 
-		rows, qErr := queryToMaps(qCtx, tx, q.SQL)
+		sql := q.SQL
+		if c.beforeQueryForTest != nil {
+			sql = c.beforeQueryForTest(qCtx, tx, q.ID, sql)
+		}
+		rows, qErr := queryToMaps(qCtx, tx, sql)
 		elapsed := time.Since(start)
 		qTimedOut := qCtx.Err() == context.DeadlineExceeded
 		qCancel()
 
+		// R108 (#329): when the query drained the per-cycle budget, the
+		// parent ctx is now expired too — so the savepoint bookkeeping
+		// below MUST run under a bounded fresh context, not ctx. With ctx
+		// pgx rejects ROLLBACK TO SAVEPOINT / RELEASE ("context deadline
+		// exceeded"), collectTarget returns a hard error here, and
+		// execution never reaches the block that appends the remaining
+		// budget_exhausted skipped runs or persists the partial cycle —
+		// the exact completeness gap #8 / SIGNALS-R108 was closed to fix.
+		// This mirrors the fresh-context commit at the end of the cycle:
+		// transaction bookkeeping is not governed by the elapsed budget.
+		spCtx, spCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		if qErr != nil {
 			// Roll back to the savepoint to recover the transaction.
-			if _, rbErr := tx.Exec(ctx, "ROLLBACK TO SAVEPOINT "+savepointName); rbErr != nil {
+			if _, rbErr := tx.Exec(spCtx, "ROLLBACK TO SAVEPOINT "+savepointName); rbErr != nil {
+				spCancel()
 				return fmt.Errorf("rollback to savepoint %s for %s: %w (transaction state inconsistent after query error: %v)", savepointName, tgt.Name, rbErr, qErr)
 			}
 		}
-		if _, relErr := tx.Exec(ctx, "RELEASE SAVEPOINT "+savepointName); relErr != nil {
+		if _, relErr := tx.Exec(spCtx, "RELEASE SAVEPOINT "+savepointName); relErr != nil {
+			spCancel()
 			return fmt.Errorf("release savepoint %s for %s: %w", savepointName, tgt.Name, relErr)
 		}
+		spCancel()
 
 		runID := ulid.MustNew(ulid.Timestamp(now), c.entropy).String()
 
