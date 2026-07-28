@@ -597,6 +597,25 @@ A future revision MAY upgrade this to a per-export SQLite read
 transaction (true WAL MVCC snapshot) without changing the externally
 observable invariant.
 
+**Concurrency model — per-call local scope (issue #323).** Because
+multiple exports run concurrently (shared read lock, above), the
+request-specific scope of a single `WriteTo` call **shall be local and
+immutable for that call**. The resolved scope — the in-scope snapshot
+rows, the snapshot-ID membership set, the resolved query-run set, and
+the `run_scope` label — is carried in a per-call value threaded through
+every file writer, **never stored on the shared exporter**. The daemon
+constructs one long-lived exporter and dispatches every `GET /export`
+request through it; the only mutable state that exporter may hold is
+set-once construction-time configuration (store handle, instance ID,
+unsafe-mode flag, collector-status file, the per-collector-files
+toggle), which is read-only for the daemon lifetime and identical for
+every request. Consequently two concurrent `WriteTo` calls with
+different selectors (`--snapshot-id`/`--target-id` versus
+`--all`/default) cannot alias each other's scope: each produced archive
+contains only its own metadata, snapshots, `query_runs`,
+`query_results`, `collector_status`, and optional per-collector data.
+This invariant holds under the Go race detector.
+
 **SIGNALS-R073**: The system shall support target-scoped export.
 When exporting for a specific target, query_runs, query_results, and
 collector_status shall contain only data for that target. The
@@ -2314,22 +2333,45 @@ The view is **off by default** to keep the ZIP small. It is enabled
 by `signals.export_per_collector_files: true` (or the equivalent
 `SIGNALS_EXPORT_PER_COLLECTOR_FILES=true` environment variable).
 
-When enabled, the export ZIP contains a `per-collector/` directory
-with one JSON file per collector that has at least one entry in
-`collector_status.json` for the export's scope:
+The per-collector view is a **strict regrouping of the export's
+already-resolved in-scope run set** — the same set that produced
+`query_runs.ndjson` and `query_results.ndjson`. It shall be derived
+**exclusively** from that resolved set and shall **never** re-query the
+store with a narrower or different selector. Consequently every scope
+selector (`--snapshot-id`, `--target-id`, `--all`, `--since`/`--until`,
+and the R084 default of the latest run per collector across active
+targets only, excluding disabled targets and orphan runs) yields
+per-collector files whose runs match the canonical files exactly.
 
-- File name: `per-collector/<query_id>.json`. The `query_id` is the
-  stable logical collector ID (e.g. `pg_stat_database_v1`); it is
-  the same value already used in `collector_status.json` and
-  `query_runs.ndjson`.
+**Invariant (issue #322):** no per-collector `run_id` or payload may
+appear unless that same run is present in `query_runs.ndjson`. A
+per-collector file is never a superset of, and never scoped
+differently from, the canonical bundle.
+
+When enabled, the export ZIP contains a `per-collector/` directory
+keyed by `(target_id, query_id)` drawn from the resolved run set:
+
+- File name: `per-collector/<target_id>/<query_id>.json`. The
+  `query_id` is the stable logical collector ID (e.g.
+  `pg_stat_database_v1`); it is the same value used in
+  `collector_status.json` and `query_runs.ndjson`. Grouping by
+  `(target_id, query_id)` — with `target_id` as a subdirectory —
+  preserves target attribution: a multi-target export keeps each
+  target's run for a collector as its own file instead of one target
+  silently winning a `query_id`-only grouping.
 - File content: a JSON object with the latest run's status, run
-  metadata (target name, collected_at, duration_ms, row_count, pg
-  version), and — for successful runs — the row payload as a JSON
-  array. For skipped or failed runs the row payload is omitted and
-  the reason / detail are included.
-- Latest-run-wins ordering: when the export covers multiple cycles,
-  the per-collector file reflects the most recent run for that
-  collector within the export's scope.
+  metadata (target_id, target name, collected_at, duration_ms,
+  row_count, pg version), and — for successful runs — the row payload
+  as a JSON array. For skipped or failed runs the row payload is
+  omitted and the reason / detail are included.
+- Latest-run-wins ordering: when the resolved scope contains multiple
+  runs for the same `(target_id, query_id)`, the per-collector file
+  reflects the most recent run for that pair within the scope.
+
+**Failure condition (issue #322):** when a successful in-scope run has
+a missing or corrupt result payload, the export **fails** with the same
+guard `query_results.ndjson` applies — it shall not emit a
+zero-row success stub that masks the data-integrity failure.
 
 The per-collector files do not introduce any new field beyond what
 already exists in the canonical NDJSON bundle. They are a regrouping

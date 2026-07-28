@@ -27,6 +27,32 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Concurrent exports can no longer cross-contaminate each other's
+  archives. The daemon shares one long-lived `export.Builder` across
+  every `GET /export` request, and request-specific scope (resolved
+  snapshots, resolved run set, snapshot-ID membership, run-scope label)
+  was stored on that shared Builder — so two overlapping exports with
+  different selectors raced on those fields and one archive could report
+  the other's scope (a data race under `go test -race`). Request scope
+  is now local and immutable for a single `WriteTo` call, carried in a
+  per-call value threaded through every writer; the Builder holds only
+  set-once construction-time config. Two concurrent exports with
+  different `--snapshot-id`/`--target-id` vs `--all`/default selectors
+  now each contain only their own data (#323, SIGNALS-R110).
+- The per-collector export directory is now a strict regrouping of the
+  export's already-resolved in-scope run set instead of a fresh, more
+  permissive re-query. Previously `writePerCollectorFiles` re-queried by
+  `target_id` + time range only, so a snapshot-scoped archive could
+  carry a payload from another snapshot, the default scope could pull
+  disabled-target and history runs absent from `query_runs.ndjson`, and
+  an unscoped multi-target export grouped only by `query_id` — one
+  target silently won and attribution was lost. Files are now grouped by
+  `(target_id, query_id)` under `per-collector/<target_id>/`, so every
+  per-collector run also appears in canonical `query_runs.ndjson` and
+  target attribution is preserved. A missing or corrupt payload for a
+  successful in-scope run now fails the export (same guard as
+  `query_results.ndjson`) instead of emitting a zero-row success stub
+  (#322, SIGNALS-R080).
 - Retention cleanup now deletes a run's `query_results` payload and its
   `query_runs` row inside a single SQLite transaction, so both commit
   together or roll back together (#327). Previously the two deletes ran as
