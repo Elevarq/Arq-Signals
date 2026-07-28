@@ -456,22 +456,21 @@ var _ = fmt.Sprintf
 
 // TestExportHTTPDefaultScopeAndAllSelector exercises the wire
 // contract: bare /export → R084 default; /export?all=true → full
-// history; both visible to the operator via metadata.
+// history; both visible to the operator via metadata. The store is
+// seeded with one successful cycle so the default scope has data —
+// under FC-05/R125 a data-less default export is refused (422), which
+// is covered by TestExportRefusesDefaultNoData.
 func TestExportHTTPDefaultScopeAndAllSelector(t *testing.T) {
-	handler, cleanup := makeTestHandler(t)
+	handler, store, cleanup := makeTestHandlerWithStore(t)
 	defer cleanup()
-
-	// Cannot easily seed snapshots through the makeTestHandler path
-	// (the store is internal to the helper), so we only exercise the
-	// status-code + content-type contract here. The richer scope
-	// assertions live in the builder-level tests above.
+	seedOneSuccessfulSnapshot(t, store)
 
 	r := httptest.NewRequest("GET", "/export", nil)
 	r.Header.Set("Authorization", "Bearer "+testAPIToken)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, r)
 	if w.Code != http.StatusOK {
-		t.Errorf("GET /export (default) status = %d, want 200", w.Code)
+		t.Errorf("GET /export (default, with data) status = %d, want 200", w.Code)
 	}
 	if ct := w.Header().Get("Content-Type"); ct != "application/zip" {
 		t.Errorf("Content-Type = %q, want application/zip", ct)

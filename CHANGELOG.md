@@ -6,6 +6,27 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- FC-05 false-clean export gap: a default-scope `GET /export` with no
+  successful collection data no longer returns a clean, empty HTTP 200
+  ZIP that a consumer cannot distinguish from a fresh system. The
+  default scope is now **refused** with HTTP 422 and a `reason` that
+  distinguishes `no_collection_yet` from `last_collection_failed`
+  (naming the bounded failure category), emitting an `export_rejected`
+  audit event. A collection cycle that fails entirely for an enabled
+  target (`cycleStatus == "failed"`) now durably records its outcome
+  (new `target_cycle_outcomes` table, migration 005) instead of being
+  log-only, so the export can read it; a later successful cycle clears
+  the marker. Every emitted export `metadata.json` (all scopes) now
+  carries a `collection_status` marker (`ok` / `no_collection_yet` /
+  `last_collection_failed`); the forensic `--all` / selector scopes
+  stay permissive but are never a silent clean snapshot. New rules
+  SIGNALS-R125 (export refusal) and SIGNALS-R126 (persisted last-cycle
+  outcome); INV-SIGNALS-25. Composes with the consumer-side Analyzer
+  hardening (Elevarq/Analyzer#1885, #1887) so a broken Signals
+  collection surfaces as a detectable failure (#340).
+
 ## [1.1.0] - 2026-07-28
 
 ### Added

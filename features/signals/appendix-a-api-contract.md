@@ -276,6 +276,26 @@ The response body is a ZIP archive containing:
 **Error responses:**
 - `400 Bad Request` — `snapshot_id` and `all=true` both supplied.
 - `404 Not Found` — `snapshot_id` references no row in `snapshots`.
+- `422 Unprocessable Entity` — **default scope** (no selector
+  parameters) with no successful collection data to package
+  (SIGNALS-R125 / FC-05). The body distinguishes the cause:
+  ```json
+  {"error": "<message>", "reason": "no_collection_yet" | "last_collection_failed"}
+  ```
+  - `no_collection_yet` — no enabled target has ever completed a cycle.
+  - `last_collection_failed` — the last cycle for an enabled target
+    failed entirely (target unreachable / auth / role-safety;
+    SIGNALS-R126); the message names the persisted failure category
+    (`connect_error` / `safety_check` / `version_unsupported` /
+    `timeout_setup` / `persistence` / `internal`).
+
+  The refusal emits an `export_rejected` audit event (mirroring
+  `export_requested` / `export_completed`) with `actor`, `reason`, and
+  `duration_ms`. A 2xx export never presents a failed or absent
+  collection as a clean, complete snapshot (INV-SIGNALS-25). The
+  forensic selector scopes (`all=true`, `snapshot_id`, `since`/`until`)
+  are **not** refused — they may legitimately be empty — but their
+  emitted `metadata.json` carries the `collection_status` marker below.
 
 ### GET /metrics (optional)
 
@@ -309,6 +329,7 @@ The `metadata.json` file in the export ZIP shall contain:
   "unsafe_mode": <boolean>,
   "snapshot_count": <integer>,
   "ingest_mode": "analyze" | "history_only",
+  "collection_status": "ok" | "no_collection_yet" | "last_collection_failed",
   "target_identity": {
     "host": "<string>",
     "port": <integer>,
@@ -345,6 +366,21 @@ semantics are:
   Indicates how the consuming Analyzer should process this export
   (advisory; the Analyzer side of the contract is specified in the
   sibling `arq` repository).
+- **`collection_status`** — required as of SIGNALS-R125. Marks whether
+  the packaged data represents a healthy collection so a consumer never
+  has to infer emptiness or failure from an absent snapshot row
+  (INV-SIGNALS-25):
+  - `"ok"` — successful collection data is present in scope.
+  - `"no_collection_yet"` — no enabled target has completed a cycle.
+  - `"last_collection_failed"` — the last cycle for an enabled target
+    failed entirely (SIGNALS-R126). The default scope refuses this case
+    with HTTP 422; it appears in `metadata.json` only for the forensic
+    `--all` / selector scopes, which are not refused. A consumer that
+    finds this value MUST treat the export as failed/incomplete, not as
+    a clean snapshot. This composes with the consumer-side Analyzer
+    guards (synthetic-completeness on absent `collector_status`,
+    ingestion-integrity checks) so a broken Signals collection surfaces
+    as a detectable failure.
 
 When `unsafe_mode` is `true`, the metadata shall also include:
 

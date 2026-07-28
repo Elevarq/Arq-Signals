@@ -19,7 +19,7 @@ import (
 // makeR083Handler builds an HTTP handler with R083 Mode B wiring.
 // When mode != managed the controlPlaneToken is ignored and the
 // server only honours the local API token.
-func makeR083Handler(t *testing.T, mode, controlPlaneTokenFile string) http.Handler {
+func makeR083Handler(t *testing.T, mode, controlPlaneTokenFile string) (http.Handler, *db.DB) {
 	t.Helper()
 	dir := t.TempDir()
 	store, err := db.Open(filepath.Join(dir, "r083.db"), false)
@@ -56,7 +56,7 @@ func makeR083Handler(t *testing.T, mode, controlPlaneTokenFile string) http.Hand
 	}
 
 	srv := api.NewServer("127.0.0.1:0", 10*time.Second, 10*time.Second, testAPIToken, deps)
-	return srv.Handler()
+	return srv.Handler(), store
 }
 
 func writeTokenFile(t *testing.T, contents string) string {
@@ -176,7 +176,7 @@ func TestR083FileAndEnvMutuallyExclusive(t *testing.T) {
 // Traces: SIGNALS-R083 / TC-SIG-086
 func TestR083APITokenStaysLocalOperator(t *testing.T) {
 	tokenFile := writeTokenFile(t, testCPToken)
-	handler := makeR083Handler(t, config.ModeManaged, tokenFile)
+	handler, _ := makeR083Handler(t, config.ModeManaged, tokenFile)
 
 	out := captureAuditLogs(t, func() {
 		req := httptest.NewRequest("POST", "/collect/now", nil)
@@ -199,7 +199,7 @@ func TestR083APITokenStaysLocalOperator(t *testing.T) {
 // Traces: SIGNALS-R083 / TC-SIG-087
 func TestR083ControlPlaneTokenSetsControlPlaneActor(t *testing.T) {
 	tokenFile := writeTokenFile(t, testCPToken)
-	handler := makeR083Handler(t, config.ModeManaged, tokenFile)
+	handler, _ := makeR083Handler(t, config.ModeManaged, tokenFile)
 
 	out := captureAuditLogs(t, func() {
 		req := httptest.NewRequest("POST", "/collect/now", nil)
@@ -221,7 +221,7 @@ func TestR083StandaloneIgnoresControlPlaneToken(t *testing.T) {
 	// mode=standalone: even with a control-plane-token-shaped
 	// secret in the request, only api.token is consulted. The
 	// control-plane token is ignored at auth time.
-	handler := makeR083Handler(t, config.ModeStandalone, "")
+	handler, _ := makeR083Handler(t, config.ModeStandalone, "")
 
 	req := httptest.NewRequest("POST", "/collect/now", nil)
 	req.Header.Set("Authorization", "Bearer "+testCPToken)
@@ -236,7 +236,7 @@ func TestR083StandaloneIgnoresControlPlaneToken(t *testing.T) {
 // Traces: SIGNALS-R083 / TC-SIG-089
 func TestR083UnknownTokenStill401(t *testing.T) {
 	tokenFile := writeTokenFile(t, testCPToken)
-	handler := makeR083Handler(t, config.ModeManaged, tokenFile)
+	handler, _ := makeR083Handler(t, config.ModeManaged, tokenFile)
 
 	req := httptest.NewRequest("POST", "/collect/now", nil)
 	req.Header.Set("Authorization", "Bearer "+strings.Repeat("z", 32))
@@ -251,7 +251,7 @@ func TestR083UnknownTokenStill401(t *testing.T) {
 // Traces: SIGNALS-R083 / TC-SIG-090
 func TestR083TokenRotation(t *testing.T) {
 	tokenFile := writeTokenFile(t, testCPToken)
-	handler := makeR083Handler(t, config.ModeManaged, tokenFile)
+	handler, _ := makeR083Handler(t, config.ModeManaged, tokenFile)
 
 	// First request: original token works.
 	req := httptest.NewRequest("POST", "/collect/now", nil)
@@ -290,7 +290,11 @@ func TestR083TokenRotation(t *testing.T) {
 // Traces: SIGNALS-R083 / TC-SIG-092
 func TestR083ExportEventsCarryActor(t *testing.T) {
 	tokenFile := writeTokenFile(t, testCPToken)
-	handler := makeR083Handler(t, config.ModeManaged, tokenFile)
+	handler, store := makeR083Handler(t, config.ModeManaged, tokenFile)
+
+	// FC-05/R125: seed successful data so the default export succeeds
+	// (a data-less default export is refused with 422).
+	seedOneSuccessfulSnapshot(t, store)
 
 	out := captureAuditLogs(t, func() {
 		req := httptest.NewRequest("GET", "/export", nil)
@@ -319,7 +323,7 @@ func TestR083ExportEventsCarryActor(t *testing.T) {
 // Traces: SIGNALS-R083 / TC-SIG-091 / INV-SIGNALS-07
 func TestR083AuditLogsContainNoTokenValue(t *testing.T) {
 	tokenFile := writeTokenFile(t, testCPToken)
-	handler := makeR083Handler(t, config.ModeManaged, tokenFile)
+	handler, _ := makeR083Handler(t, config.ModeManaged, tokenFile)
 
 	out := captureAuditLogs(t, func() {
 		// One success and one failure to exercise both auth paths.

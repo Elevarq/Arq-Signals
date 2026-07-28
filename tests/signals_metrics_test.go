@@ -20,7 +20,7 @@ import (
 // disabled (registry == nil, path == "") or enabled at the given path
 // with a fresh registry. Returns the registry so tests can poke it
 // directly.
-func makeMetricsTestHandler(t *testing.T, enabled bool, path string) (http.Handler, *metrics.Registry, func()) {
+func makeMetricsTestHandler(t *testing.T, enabled bool, path string) (http.Handler, *metrics.Registry, *db.DB, func()) {
 	t.Helper()
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "metrics.db")
@@ -53,7 +53,7 @@ func makeMetricsTestHandler(t *testing.T, enabled bool, path string) (http.Handl
 		MetricsPath: path,
 	}
 	srv := api.NewServer("127.0.0.1:0", 10*time.Second, 10*time.Second, testAPIToken, deps)
-	return srv.Handler(), reg, func() { _ = store.Close() }
+	return srv.Handler(), reg, store, func() { _ = store.Close() }
 }
 
 // ---------------------------------------------------------------------------
@@ -65,7 +65,7 @@ func makeMetricsTestHandler(t *testing.T, enabled bool, path string) (http.Handl
 // all. A scrape against /metrics returns 404, not silent success.
 // Traces: SIGNALS-R079
 func TestMetricsEndpoint404WhenDisabled(t *testing.T) {
-	handler, reg, cleanup := makeMetricsTestHandler(t, false, "")
+	handler, reg, _, cleanup := makeMetricsTestHandler(t, false, "")
 	defer cleanup()
 	if reg != nil {
 		t.Fatal("registry should be nil when metrics are disabled")
@@ -87,7 +87,7 @@ func TestMetricsEndpoint404WhenDisabled(t *testing.T) {
 // lines after a first observation; the test mirrors that contract.
 // Traces: SIGNALS-R079
 func TestMetricsEndpointReturnsPromFormat(t *testing.T) {
-	handler, reg, cleanup := makeMetricsTestHandler(t, true, "/metrics")
+	handler, reg, _, cleanup := makeMetricsTestHandler(t, true, "/metrics")
 	defer cleanup()
 
 	// Sample every vec at least once and bump the unlabelled gauges.
@@ -144,7 +144,7 @@ func TestMetricsEndpointReturnsPromFormat(t *testing.T) {
 // API's bearer-token auth model. Without a token, the response is 401.
 // Traces: SIGNALS-R079
 func TestMetricsEndpointRequiresAuth(t *testing.T) {
-	handler, _, cleanup := makeMetricsTestHandler(t, true, "/metrics")
+	handler, _, _, cleanup := makeMetricsTestHandler(t, true, "/metrics")
 	defer cleanup()
 
 	req := httptest.NewRequest("GET", "/metrics", nil)
@@ -167,7 +167,7 @@ func TestMetricsEndpointRequiresAuth(t *testing.T) {
 // the listed substrings have no benign reason to appear.
 // Traces: SIGNALS-R079
 func TestMetricsOutputContainsNoSQLOrSecrets(t *testing.T) {
-	handler, reg, cleanup := makeMetricsTestHandler(t, true, "/metrics")
+	handler, reg, _, cleanup := makeMetricsTestHandler(t, true, "/metrics")
 	defer cleanup()
 
 	// Pretend the daemon has been busy.
@@ -215,8 +215,12 @@ func TestMetricsOutputContainsNoSQLOrSecrets(t *testing.T) {
 // export counter and duration histogram both moved.
 // Traces: SIGNALS-R079
 func TestMetricsCountersUpdateOnExport(t *testing.T) {
-	handler, _, cleanup := makeMetricsTestHandler(t, true, "/metrics")
+	handler, _, store, cleanup := makeMetricsTestHandler(t, true, "/metrics")
 	defer cleanup()
+
+	// FC-05/R125: seed successful data so the default export succeeds
+	// (a data-less default export is now refused with 422).
+	seedOneSuccessfulSnapshot(t, store)
 
 	// Drive a successful export.
 	req := httptest.NewRequest("GET", "/export", nil)
@@ -263,7 +267,7 @@ func TestMetricsCountersUpdateOnExport(t *testing.T) {
 // appear with the expected labels.
 // Traces: SIGNALS-R079
 func TestMetricsCountersUpdateOnCollection(t *testing.T) {
-	handler, reg, cleanup := makeMetricsTestHandler(t, true, "/metrics")
+	handler, reg, _, cleanup := makeMetricsTestHandler(t, true, "/metrics")
 	defer cleanup()
 
 	// Simulate a successful cycle and a failed cycle on different targets.
@@ -303,7 +307,7 @@ func TestMetricsCountersUpdateOnCollection(t *testing.T) {
 // running with high-sensitivity collection enabled.
 // Traces: SIGNALS-R079 / SIGNALS-R075
 func TestMetricsHighSensitivityGauge(t *testing.T) {
-	handler, reg, cleanup := makeMetricsTestHandler(t, true, "/metrics")
+	handler, reg, _, cleanup := makeMetricsTestHandler(t, true, "/metrics")
 	defer cleanup()
 
 	reg.SetHighSensitivityEnabled(true)

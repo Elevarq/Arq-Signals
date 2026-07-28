@@ -987,6 +987,25 @@ func (c *Collector) collectTarget(ctx context.Context, tgt config.TargetConfig, 
 			completedAttrs = append(completedAttrs, "forced", true)
 		}
 		safety.AuditLog("collection_completed", completedAttrs...)
+
+		// R126: persist the last-cycle outcome durably so a later
+		// export can distinguish "last collection failed: <category>"
+		// from "no collection has run yet" (R125 / FC-05). A failed
+		// cycle records the bounded failure category; success/partial
+		// clears any prior failure marker. Metadata only — no
+		// credential or secret is written (INV-SIGNALS-07). A write
+		// failure here is logged, not fatal: the cycle's real outcome
+		// already stands, and the worst case is a stale marker that a
+		// later cycle overwrites.
+		outcomeCategory := ""
+		if status == "failed" {
+			outcomeCategory = classifyCollectionFailure(err)
+		}
+		if recErr := c.db.RecordCycleOutcome(tgt.Name, status, outcomeCategory); recErr != nil {
+			slog.Warn("failed to persist cycle outcome (R126)",
+				"target", tgt.Name, "status", status, "err", recErr)
+		}
+
 		c.metrics.ObserveCollection(tgt.Name, status, duration.Seconds())
 		c.metrics.AddCollectorOutcomes(tgt.Name, success, failedByReason, skippedByReason)
 		if status == "failed" {

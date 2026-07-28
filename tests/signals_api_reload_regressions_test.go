@@ -80,8 +80,12 @@ func newTestServerForRegression(t *testing.T, initialTargets []config.TargetConf
 // the Registry — this test is the regression backstop in case a
 // future method forgets that guard.
 func TestExport_NoPanicWhenMetricsNil_Success(t *testing.T) {
-	ts, _, cleanup := newTestServerForRegression(t, nil, false)
+	ts, deps, cleanup := newTestServerForRegression(t, nil, false)
 	defer cleanup()
+
+	// FC-05/R125: seed successful data so the default export returns a
+	// ZIP rather than the no-data refusal (422).
+	seedOneSuccessfulSnapshot(t, deps.DB)
 
 	req, _ := http.NewRequest("GET", ts.URL+"/export", nil)
 	req.Header.Set("Authorization", "Bearer "+testAPIToken)
