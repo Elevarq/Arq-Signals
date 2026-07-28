@@ -1875,6 +1875,49 @@ Reload scope in v1:
   profile (R098). Pool for that target is closed so the next
   cycle re-dials with the new params.
 
+**SIGNALS-R100.1 (connection-identity pool invalidation)**: On
+reload, a modified target's pool is closed **whenever any field
+that affects how the collector dials, secures, selects,
+resolves, or caches its connection credential changes** — not
+only the host/port/database/user/sslmode/password-source subset.
+The exhaustive set of pool-affecting `TargetConfig` fields is:
+
+- **Dialing**: `Host`, `Port`, `DBName`, `User`, `SSLMode`.
+- **TLS**: `SSLRootCertFile` (CA / server verification),
+  `SSLCert`, `SSLKey`, `SSLKeyPassphraseFile` (mTLS client
+  material).
+- **Credential selection**: `AuthMethod`, `Region`,
+  `AzureClientID`, `GCPImpersonateServiceAccount`, `SecretRef`,
+  `SecretJSONKey`.
+- **Credential content**: `PasswordFile`, `PasswordEnv`,
+  `PgpassFile`.
+- **Credential caching**: `MaxCacheTTL`.
+
+A change to **any** of these fields MUST invalidate and close
+the target's pool so the next cycle re-dials and re-resolves the
+credential with the new configuration — because the pool's
+`BeforeConnect` credential-resolution closure captured the
+target config at pool-creation time, a stale pool would keep
+resolving the old auth method / secret / cloud identity / cert /
+CA even on future connections (the R100 pool-closure guarantee
+would otherwise silently regress).
+
+The reload comparison MUST be robust against future field
+additions: it derives a *connection identity* from the
+exhaustive field set above so that adding a new credential- or
+connection-affecting field to `TargetConfig` forces a
+compile-time or test-time update rather than being silently
+omitted from the comparison.
+
+Fields that do **not** affect the connection (currently the
+per-target `collectors` sensitivity profile and the `Enabled`
+flag) are excluded from the connection identity: a change to
+those alone takes effect on reload **without** dropping the
+pool, and the reload audit still records the target as
+`config_reload_target_modified`. The reload audit accurately
+distinguishes an applied modification (a `config_reload_target_
+modified` event) from an unchanged target (no event).
+
 Reload v1 does NOT update (set-at-construction for now):
 
 - `poll_interval` (ticker keeps its boot value)
