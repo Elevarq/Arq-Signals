@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/elevarq/signals/internal/collector"
@@ -56,6 +57,16 @@ type Options struct {
 const CollectorStatusSchemaVersion = "1"
 
 // Builder creates a ZIP export of collected data.
+//
+// R110 concurrency model (issue #323): a Builder holds ONLY set-once
+// construction-time configuration (store handle, instance ID,
+// unsafe-mode flag, collector-status file, the per-collector-files
+// toggle). Every field below is written before the daemon starts
+// serving and is read-only for its lifetime, so the single long-lived
+// Builder the daemon shares across concurrent GET /export requests is
+// safe to call concurrently. Per-request scope is NOT stored here — it
+// lives in a per-call exportScope value threaded through the writers,
+// so two concurrent WriteTo calls cannot alias each other's scope.
 type Builder struct {
 	store                            *db.DB
 	instanceID                       string
@@ -64,26 +75,27 @@ type Builder struct {
 	collectorStatus                  *collector.CollectorStatusFile
 	highSensitivityCollectorsEnabled bool
 	perCollectorFiles                bool
+}
 
-	// Per-call snapshot scope, resolved at the top of WriteTo from
-	// Options and used by every writer below it. R084/R085: holding
-	// the resolved set on the Builder keeps the writer signatures
-	// unchanged while ensuring snapshots, query_runs, and
-	// query_results can never disagree about which cycles are in
-	// scope.
-	scopedSnapshots   []db.Snapshot
-	scopedSnapshotIDs map[string]bool
-
-	// scopedRunSet is the resolved set of query_runs for the export.
-	// For selector scopes it is every run in scopedSnapshots; for the
-	// R084 default scope it is the latest run per (target_id, query_id)
-	// — which may reference more snapshots than the selector path. Held
-	// on the builder so collector_status, query_runs, and query_results
-	// all draw from the same set.
-	scopedRunSet []db.QueryRun
-	// runScope labels the scope in metadata.json (R086):
-	// "latest-per-collector" for the default, "snapshot" for selectors.
-	runScope string
+// exportScope is the request-specific scope of a single WriteTo call.
+// It is resolved once at the top of WriteTo and passed by value/pointer
+// to every writer, so it is local and immutable for that call (issue
+// #323). Nothing here is ever stored on the shared Builder.
+//
+//   - snapshots      — the snapshot rows in scope (R084/R085).
+//   - snapshotIDs    — membership set for the scoped snapshots.
+//   - runSet         — the resolved query_runs. For selector scopes it
+//     is every run in the scoped snapshots; for the R084 default scope
+//     it is the latest run per (target_id, query_id). collector_status,
+//     query_runs, query_results, and the per-collector view all draw
+//     from this one set so they can never disagree (issue #322).
+//   - runScope       — metadata.json label (R086): "latest-per-collector"
+//     for the default, "snapshot" for selectors.
+type exportScope struct {
+	snapshots   []db.Snapshot
+	snapshotIDs map[string]bool
+	runSet      []db.QueryRun
+	runScope    string
 }
 
 // NewBuilder creates a new export Builder.
@@ -133,26 +145,28 @@ func (b *Builder) WriteTo(w io.Writer, opts Options) error {
 	release := b.store.LockExports()
 	defer release()
 
-	// Resolve the snapshot scope once, up front. Every writer below
-	// reads from b.scopedSnapshots / b.scopedSnapshotIDs so the six
-	// files in the ZIP can never disagree about which cycles are
-	// in scope (R084/R085).
-	if err := b.resolveScope(opts); err != nil {
+	// Resolve the snapshot scope once, up front, into a per-call value.
+	// Every writer below reads from this local scope so the six files
+	// in the ZIP can never disagree about which cycles are in scope
+	// (R084/R085) and two concurrent WriteTo calls cannot alias each
+	// other's scope (R110, issue #323).
+	scope, err := b.resolveScope(opts)
+	if err != nil {
 		return err
 	}
 
 	zw := zip.NewWriter(w)
 	defer func() { _ = zw.Close() }()
 
-	if err := b.writeMetadata(zw, opts); err != nil {
+	if err := b.writeMetadata(zw, opts, scope); err != nil {
 		return fmt.Errorf("write metadata.json: %w", err)
 	}
 
-	if err := b.writeCollectorStatus(zw, opts); err != nil {
+	if err := b.writeCollectorStatus(zw, opts, scope); err != nil {
 		return fmt.Errorf("write collector_status.json: %w", err)
 	}
 
-	if err := b.writeSnapshots(zw, opts); err != nil {
+	if err := b.writeSnapshots(zw, opts, scope); err != nil {
 		return fmt.Errorf("write snapshots.ndjson: %w", err)
 	}
 
@@ -160,16 +174,16 @@ func (b *Builder) WriteTo(w io.Writer, opts Options) error {
 		return fmt.Errorf("write query_catalog.json: %w", err)
 	}
 
-	if err := b.writeQueryRuns(zw, opts); err != nil {
+	if err := b.writeQueryRuns(zw, scope); err != nil {
 		return fmt.Errorf("write query_runs.ndjson: %w", err)
 	}
 
-	if err := b.writeQueryResults(zw, opts); err != nil {
+	if err := b.writeQueryResults(zw, scope); err != nil {
 		return fmt.Errorf("write query_results.ndjson: %w", err)
 	}
 
 	if b.perCollectorFiles {
-		if err := b.writePerCollectorFiles(zw, opts); err != nil {
+		if err := b.writePerCollectorFiles(zw, opts, scope); err != nil {
 			return fmt.Errorf("write per-collector files: %w", err)
 		}
 	}
@@ -178,8 +192,10 @@ func (b *Builder) WriteTo(w io.Writer, opts Options) error {
 }
 
 // resolveScope selects the snapshot rows that belong in the export
-// according to R084/R085 semantics. The result is cached on the
-// builder so the individual file writers all see the same set.
+// according to R084/R085 semantics and returns them in a per-call
+// exportScope value (issue #323: never stored on the shared Builder).
+// The individual file writers all read from the returned scope, so the
+// files in the ZIP cannot disagree.
 //
 //   - All && SnapshotID         → ErrConflictingSelectors.
 //   - SnapshotID set            → that one snapshot, or
@@ -190,14 +206,16 @@ func (b *Builder) WriteTo(w io.Writer, opts Options) error {
 //   - default                   → R084: latest completed snapshot
 //     per active target, optionally
 //     narrowed by target_id.
-func (b *Builder) resolveScope(opts Options) error {
+func (b *Builder) resolveScope(opts Options) (*exportScope, error) {
 	if opts.All && opts.SnapshotID != "" {
-		return ErrConflictingSelectors
+		return nil, ErrConflictingSelectors
 	}
 
-	// Selector scopes are snapshot-based; the default scope overrides
-	// this to "latest-per-collector" below (R086).
-	b.runScope = "snapshot"
+	scope := &exportScope{
+		// Selector scopes are snapshot-based; the default scope
+		// overrides this to "latest-per-collector" below (R086).
+		runScope: "snapshot",
+	}
 
 	var snaps []db.Snapshot
 
@@ -205,16 +223,16 @@ func (b *Builder) resolveScope(opts Options) error {
 	case opts.SnapshotID != "":
 		s, err := b.store.GetSnapshotByID(opts.SnapshotID)
 		if err != nil {
-			return fmt.Errorf("lookup snapshot %q: %w", opts.SnapshotID, err)
+			return nil, fmt.Errorf("lookup snapshot %q: %w", opts.SnapshotID, err)
 		}
 		if s == nil {
-			return fmt.Errorf("%w: %s", ErrSnapshotNotFound, opts.SnapshotID)
+			return nil, fmt.Errorf("%w: %s", ErrSnapshotNotFound, opts.SnapshotID)
 		}
 		// Honour TargetID as a guard: requesting a snapshot that
 		// belongs to a different target is treated as not found, so
 		// an HTTP caller can't probe across targets via this path.
 		if opts.TargetID > 0 && s.TargetID != opts.TargetID {
-			return fmt.Errorf("%w: %s (target_id mismatch)", ErrSnapshotNotFound, opts.SnapshotID)
+			return nil, fmt.Errorf("%w: %s (target_id mismatch)", ErrSnapshotNotFound, opts.SnapshotID)
 		}
 		snaps = []db.Snapshot{*s}
 
@@ -226,7 +244,7 @@ func (b *Builder) resolveScope(opts Options) error {
 			snaps, err = b.store.GetAllSnapshots(opts.Since, opts.Until)
 		}
 		if err != nil {
-			return fmt.Errorf("scan snapshots in scope: %w", err)
+			return nil, fmt.Errorf("scan snapshots in scope: %w", err)
 		}
 
 	default:
@@ -236,10 +254,10 @@ func (b *Builder) resolveScope(opts Options) error {
 		// every collector, not only those due in its newest cycle.
 		runs, err := b.store.GetLatestRunsPerCollector(opts.TargetID)
 		if err != nil {
-			return fmt.Errorf("latest runs per collector: %w", err)
+			return nil, fmt.Errorf("latest runs per collector: %w", err)
 		}
-		b.runScope = "latest-per-collector"
-		b.scopedRunSet = runs
+		scope.runScope = "latest-per-collector"
+		scope.runSet = runs
 
 		// Materialise the snapshots those runs belong to so
 		// snapshots.ndjson and per-snapshot identity stay consistent.
@@ -254,33 +272,33 @@ func (b *Builder) resolveScope(opts Options) error {
 		}
 		snaps, err = b.store.GetSnapshotsByIDs(snapIDs)
 		if err != nil {
-			return fmt.Errorf("snapshots for latest runs: %w", err)
+			return nil, fmt.Errorf("snapshots for latest runs: %w", err)
 		}
 	}
 
-	b.scopedSnapshots = snaps
-	b.scopedSnapshotIDs = make(map[string]bool, len(snaps))
+	scope.snapshots = snaps
+	scope.snapshotIDs = make(map[string]bool, len(snaps))
 	for _, s := range snaps {
-		b.scopedSnapshotIDs[s.ID] = true
+		scope.snapshotIDs[s.ID] = true
 	}
 
 	// Selector scopes draw their run set from the resolved snapshots;
-	// the default scope already set scopedRunSet at the run level above.
-	if b.runScope == "snapshot" {
+	// the default scope already set runSet at the run level above.
+	if scope.runScope == "snapshot" {
 		ids := make([]string, 0, len(snaps))
 		for _, s := range snaps {
 			ids = append(ids, s.ID)
 		}
 		runs, err := b.store.GetQueryRunsBySnapshotIDs(ids)
 		if err != nil {
-			return fmt.Errorf("runs for scoped snapshots: %w", err)
+			return nil, fmt.Errorf("runs for scoped snapshots: %w", err)
 		}
-		b.scopedRunSet = runs
+		scope.runSet = runs
 	}
-	return nil
+	return scope, nil
 }
 
-func (b *Builder) writeMetadata(zw *zip.Writer, opts Options) error {
+func (b *Builder) writeMetadata(zw *zip.Writer, opts Options, scope *exportScope) error {
 	f, err := zw.Create("metadata.json")
 	if err != nil {
 		return err
@@ -306,12 +324,12 @@ func (b *Builder) writeMetadata(zw *zip.Writer, opts Options) error {
 		// every operator-driven export; "history_only" is reserved
 		// for R087 backlog-replay traffic and is set only by the
 		// (future) replay path.
-		"snapshot_count": len(b.scopedSnapshots),
+		"snapshot_count": len(scope.snapshots),
 		"ingest_mode":    "analyze",
 		// R086: marks how runs were assembled — "latest-per-collector"
 		// for the R084 default (runs may carry differing collected_at)
 		// or "snapshot" for selector scopes.
-		"run_scope": b.runScope,
+		"run_scope": scope.runScope,
 	}
 	if opts.TargetID > 0 {
 		if name, err := b.store.GetTargetName(opts.TargetID); err == nil && name != "" {
@@ -346,7 +364,7 @@ func (b *Builder) writeMetadata(zw *zip.Writer, opts Options) error {
 	return json.NewEncoder(f).Encode(data)
 }
 
-func (b *Builder) writeCollectorStatus(zw *zip.Writer, opts Options) error {
+func (b *Builder) writeCollectorStatus(zw *zip.Writer, opts Options, scope *exportScope) error {
 	f, err := zw.Create("collector_status.json")
 	if err != nil {
 		return err
@@ -358,15 +376,12 @@ func (b *Builder) writeCollectorStatus(zw *zip.Writer, opts Options) error {
 	// land in this ZIP — a fresh-install / latest-only export
 	// reports just one cycle's collectors per target instead of the
 	// daemon's accumulated history.
-	scopedRuns, err := b.scopedRuns()
-	if err != nil {
-		return err
-	}
+	scopedRuns := scope.runSet
 
 	// Target-scoped: build status from query runs for that target (MTE-R004).
 	if opts.TargetID > 0 {
 		targetName := b.resolveTargetName(opts.TargetID)
-		statuses := b.applyFreshness(collector.BuildStatusFromRuns(scopedRuns), scopedRuns, true)
+		statuses := b.applyFreshness(collector.BuildStatusFromRuns(scopedRuns), scopedRuns, true, scope)
 
 		file := collector.CollectorStatusFile{
 			SchemaVersion: CollectorStatusSchemaVersion,
@@ -399,7 +414,7 @@ func (b *Builder) writeCollectorStatus(zw *zip.Writer, opts Options) error {
 	file := collector.CollectorStatusFile{
 		SchemaVersion: CollectorStatusSchemaVersion,
 		CollectedAt:   time.Now().UTC().Format(time.RFC3339),
-		Collectors:    b.applyFreshness(collector.BuildStatusFromRuns(scopedRuns), scopedRuns, false),
+		Collectors:    b.applyFreshness(collector.BuildStatusFromRuns(scopedRuns), scopedRuns, false, scope),
 	}
 	if file.Collectors == nil {
 		file.Collectors = []collector.CollectorStatus{}
@@ -427,8 +442,8 @@ func (b *Builder) writeCollectorStatus(zw *zip.Writer, opts Options) error {
 // instance-level collector_status.json carries no target field, so a
 // per-target `never_run` entry there would be ambiguous. Cadence and
 // fresh/stale enrichment is unambiguous and applies to both.
-func (b *Builder) applyFreshness(statuses []collector.CollectorStatus, runs []db.QueryRun, withNeverRun bool) []collector.CollectorStatus {
-	if b.runScope != "latest-per-collector" {
+func (b *Builder) applyFreshness(statuses []collector.CollectorStatus, runs []db.QueryRun, withNeverRun bool, scope *exportScope) []collector.CollectorStatus {
+	if scope.runScope != "latest-per-collector" {
 		return statuses
 	}
 	now := time.Now().UTC()
@@ -513,16 +528,13 @@ func (b *Builder) writeQueryCatalog(zw *zip.Writer) error {
 // snapshot_id is in the resolved scope (R084/R085). The set is
 // computed once by resolveScope and applies uniformly to runs and
 // results so the two files cannot disagree.
-func (b *Builder) writeQueryRuns(zw *zip.Writer, opts Options) error {
+func (b *Builder) writeQueryRuns(zw *zip.Writer, scope *exportScope) error {
 	f, err := zw.Create("query_runs.ndjson")
 	if err != nil {
 		return err
 	}
 
-	runs, err := b.scopedRuns()
-	if err != nil {
-		return err
-	}
+	runs := scope.runSet
 
 	enc := json.NewEncoder(f)
 	for _, r := range runs {
@@ -552,16 +564,13 @@ func (b *Builder) writeQueryRuns(zw *zip.Writer, opts Options) error {
 
 // writeQueryResults emits one NDJSON row per successful run in the
 // resolved scope (R084/R085).
-func (b *Builder) writeQueryResults(zw *zip.Writer, opts Options) error {
+func (b *Builder) writeQueryResults(zw *zip.Writer, scope *exportScope) error {
 	f, err := zw.Create("query_results.ndjson")
 	if err != nil {
 		return err
 	}
 
-	runs, err := b.scopedRuns()
-	if err != nil {
-		return err
-	}
+	runs := scope.runSet
 
 	enc := json.NewEncoder(f)
 	for _, r := range runs {
@@ -603,7 +612,7 @@ func (b *Builder) writeQueryResults(zw *zip.Writer, opts Options) error {
 	return nil
 }
 
-func (b *Builder) writeSnapshots(zw *zip.Writer, opts Options) error {
+func (b *Builder) writeSnapshots(zw *zip.Writer, opts Options, scope *exportScope) error {
 	f, err := zw.Create("snapshots.ndjson")
 	if err != nil {
 		return err
@@ -622,7 +631,7 @@ func (b *Builder) writeSnapshots(zw *zip.Writer, opts Options) error {
 	identityCache := make(map[int64]cachedIdent)
 
 	enc := json.NewEncoder(f)
-	for _, s := range b.scopedSnapshots {
+	for _, s := range scope.snapshots {
 		row := map[string]any{
 			"id":           s.ID,
 			"target_id":    s.TargetID,
@@ -667,55 +676,62 @@ func (b *Builder) writeSnapshots(zw *zip.Writer, opts Options) error {
 	return nil
 }
 
-// scopedRuns returns every query_run whose snapshot_id is in the
-// resolved scope. Used by writeQueryRuns and writeQueryResults so
-// both files draw from the same set.
-// scopedRuns returns the run set resolved by resolveScope (R084/R085).
-// For the default scope this is the latest run per (target_id,
-// query_id); for selector scopes it is every run in the scoped
-// snapshots. Both are computed once in resolveScope so the files in
-// the ZIP cannot disagree.
-func (b *Builder) scopedRuns() ([]db.QueryRun, error) {
-	return b.scopedRunSet, nil
-}
-
-// writePerCollectorFiles regroups the latest run per collector into one
-// JSON file per query_id under `per-collector/`. R080: the canonical
-// NDJSON layout remains authoritative; this directory is a derivative
-// view for human browsing.
-func (b *Builder) writePerCollectorFiles(zw *zip.Writer, opts Options) error {
-	var runs []db.QueryRun
-	var err error
-	if opts.TargetID > 0 {
-		runs, err = b.store.GetQueryRunsByTarget(opts.TargetID, opts.Since, opts.Until)
-	} else {
-		runs, err = b.store.GetAllQueryRuns(opts.Since, opts.Until)
+// writePerCollectorFiles regroups the export's already-resolved
+// in-scope run set into one JSON file per (target_id, query_id) under
+// `per-collector/<target_id>/`. R080: the canonical NDJSON layout
+// remains authoritative; this directory is a derivative view for human
+// browsing.
+//
+// Issue #322: the view is a STRICT regrouping of scope.runSet — the
+// same runs that produced query_runs.ndjson / query_results.ndjson. It
+// never re-queries the store with a different or narrower selector, so
+// no per-collector run_id or payload can appear that is absent from the
+// canonical files. Grouping by (target_id, query_id) preserves target
+// attribution: a multi-target export keeps each target's run instead of
+// one target silently winning a query_id-only grouping. A missing or
+// corrupt payload for a successful in-scope run FAILS the export (same
+// guard as writeQueryResults) rather than emitting a zero-row stub.
+func (b *Builder) writePerCollectorFiles(zw *zip.Writer, opts Options, scope *exportScope) error {
+	// Latest-run-wins per (target_id, query_id) from the resolved
+	// scope. collected_at is RFC 3339 so a lexical compare matches time
+	// order.
+	type key struct {
+		targetID int64
+		queryID  string
 	}
-	if err != nil {
-		return err
-	}
-
-	// Latest-run-wins: collected_at is RFC 3339, lex sort matches time
-	// order. Iterate runs and keep the row whose collected_at is the
-	// largest seen for each query_id.
-	latest := make(map[string]db.QueryRun, len(runs))
-	for _, r := range runs {
-		if cur, ok := latest[r.QueryID]; !ok || r.CollectedAt > cur.CollectedAt {
-			latest[r.QueryID] = r
+	latest := make(map[key]db.QueryRun, len(scope.runSet))
+	for _, r := range scope.runSet {
+		k := key{targetID: r.TargetID, queryID: r.QueryID}
+		if cur, ok := latest[k]; !ok || r.CollectedAt > cur.CollectedAt {
+			latest[k] = r
 		}
 	}
 
 	// Stable file ordering inside the ZIP for deterministic output.
-	ids := make([]string, 0, len(latest))
-	for id := range latest {
-		ids = append(ids, id)
+	keys := make([]key, 0, len(latest))
+	for k := range latest {
+		keys = append(keys, k)
 	}
-	sort.Strings(ids)
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].targetID != keys[j].targetID {
+			return keys[i].targetID < keys[j].targetID
+		}
+		return keys[i].queryID < keys[j].queryID
+	})
 
-	for _, id := range ids {
-		r := latest[id]
+	// Cache target-name lookups so a multi-collector target resolves
+	// its name once.
+	nameCache := make(map[int64]string)
+
+	for _, k := range keys {
+		r := latest[k]
 
 		entry := map[string]any{
+			// run_id ties this file back to the canonical
+			// query_runs.ndjson so consumers (and the #322 tests) can
+			// verify the strict-regrouping invariant.
+			"run_id":       r.ID,
+			"target_id":    r.TargetID,
 			"query_id":     r.QueryID,
 			"collected_at": r.CollectedAt,
 			"pg_version":   r.PGVersion,
@@ -740,22 +756,36 @@ func (b *Builder) writePerCollectorFiles(zw *zip.Writer, opts Options) error {
 		if r.Error != "" {
 			entry["detail"] = r.Error
 		}
-		if opts.TargetID > 0 {
-			entry["target_name"] = b.resolveTargetName(opts.TargetID)
+
+		name, ok := nameCache[r.TargetID]
+		if !ok {
+			name = b.resolveTargetName(r.TargetID)
+			nameCache[r.TargetID] = name
 		}
+		entry["target_name"] = name
 
 		// Row payload only for successful runs. Skipped/failed runs
 		// describe themselves with status + reason/detail.
+		//
+		// Issue #322: for a successful in-scope run a missing or corrupt
+		// payload is a data-integrity failure — fail the export with the
+		// same guard writeQueryResults applies, never a zero-row stub.
 		if status == "success" {
 			res, err := b.store.GetQueryResultByRunID(r.ID)
-			if err == nil && res != nil {
-				if rows, decErr := db.DecodeNDJSON(res.Payload, res.Compressed); decErr == nil {
-					entry["rows"] = rows
-				}
+			if err != nil {
+				return fmt.Errorf("read result for run %s (query_id=%s): %w", r.ID, r.QueryID, err)
 			}
+			if res == nil {
+				return fmt.Errorf("missing result payload for successful run %s (query_id=%s)", r.ID, r.QueryID)
+			}
+			rows, err := db.DecodeNDJSON(res.Payload, res.Compressed)
+			if err != nil {
+				return fmt.Errorf("decode result for run %s (query_id=%s): %w", r.ID, r.QueryID, err)
+			}
+			entry["rows"] = rows
 		}
 
-		f, err := zw.Create("per-collector/" + r.QueryID + ".json")
+		f, err := zw.Create("per-collector/" + strconv.FormatInt(r.TargetID, 10) + "/" + r.QueryID + ".json")
 		if err != nil {
 			return err
 		}
