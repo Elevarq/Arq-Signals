@@ -20,6 +20,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/oklog/ulid/v2"
 
@@ -1348,6 +1349,24 @@ func (c *Collector) getPool(ctx context.Context, tgt config.TargetConfig) (*pgxp
 		default:
 			cfg.Password = cred.Password
 		}
+		return nil
+	}
+
+	// OC-R005: normalize the PostgreSQL internal "char" type (OID 18) to
+	// text on every pooled connection. pgx's default QCharCodec decodes
+	// OID 18 as an integer byte value, so any collector column of this
+	// type selected without an explicit ::text cast serializes as a JSON
+	// number (e.g. relkind → 114 instead of "r"). Registering a TextCodec
+	// for OID 18 makes rows.Values() return the char as its text form for
+	// ALL collectors and queries, present and future — matching col::text
+	// semantics (the text protocol cannot carry an embedded NUL, so a
+	// non-set attidentity comes back as "" exactly as the cast would).
+	// This fixes the class centrally rather than per column (#319,
+	// follow-up to #312/#313's leaky per-column ::text sweep).
+	poolCfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
+		conn.TypeMap().RegisterType(&pgtype.Type{
+			Name: "char", OID: pgtype.QCharOID, Codec: pgtype.TextCodec{},
+		})
 		return nil
 	}
 
