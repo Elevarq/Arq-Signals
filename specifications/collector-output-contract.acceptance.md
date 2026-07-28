@@ -262,3 +262,92 @@ allowlisted fails.
 descriptive failure if a new collector emits no rows and is not
 allowlisted.
 (`TestIntegration_CollectorOutputContractAgainstRealPG`)
+
+---
+
+### TC-OC-10: Non-"char" type classes land in the Analyzer-expected JSON form
+
+**Rule:** OC-R009 (normal — the #320 type-fidelity regression lock)
+
+**Scenario:** A target is seeded (enum + composite type, extended
+statistics, RLS-enabled child, populated tables, and — when the
+capability is present — an FDW server) so a representative collector
+column of each audited PostgreSQL type class emits a non-null value. The
+exported ZIP is read back through the same `encoding/json` decode a
+consumer uses and each class is asserted to be its expected JSON shape.
+
+**Given:**
+- A collected + exported snapshot ZIP for the seeded target.
+
+**When:**
+- The audited representative columns are inspected in
+  `query_results.ndjson`:
+  - numeric: `bloat_estimate_v1.bloat_ratio`,
+    `index_bloat_estimate_v1.bloat_ratio`,
+    `connection_utilization_v1.pct_used`,
+    `planner_stats_staleness_v1.estimate_drift_pct`,
+    `vacuum_health_v1.dead_pct`;
+  - jsonb: `pg_stat_activity_summary_v1.by_backend_type` /
+    `by_wait_event_type`, `pg_role_capabilities_v1.role_attrs`;
+  - array: `pg_types_v1.enum_labels` / `composite_columns`,
+    `index_health_summary_v1.column_set`,
+    `pg_statistic_ext_v1.attnums` / `kinds`;
+  - FDW option object (array rendered to object by the redactor):
+    `fdw_wrappers_v1.fdw_options`, `fdw_servers_v1.server_options`,
+    `fdw_foreign_tables_v1.foreign_table_options` (capability-gated);
+  - timestamp: `cluster_identity_v1.postmaster_start_time`,
+    `server_identity_v1.started_at`, `pg_stat_wal_v1.stats_reset`,
+    `vacuum_health_v1.last_analyze`, `pg_stat_user_tables_v1.last_analyze`;
+  - oid: `pg_class_storage_v1.relid`, `pg_attribute_storage_v1.atttypid`,
+    `index_health_summary_v1.index_oid`, `database_sizes_v1.datid`,
+    `bloat_estimate_v1.table_oid`;
+  - bool: `pg_class_storage_v1.relhasindex` / `relispartition`,
+    `index_health_summary_v1.is_unique`,
+    `pg_functions_v1.security_definer`,
+    `pg_role_capabilities_v1.is_superuser`.
+
+**Then:**
+- numeric columns are JSON numbers (a `NaN` numeric may be the string
+  `"NaN"`); jsonb columns are JSON objects; array columns are JSON
+  arrays; FDW option columns are JSON objects; timestamp columns are
+  RFC3339 strings parseable by `time.Parse`; oid columns are JSON
+  numbers; bool columns are JSON `true`/`false`.
+- Each asserted column emits at least one non-null value (no vacuous
+  pass).
+
+**Expected Result:** Pass on the current codecs; RED if any class
+regresses to the wrong JSON shape (mutation-verified: registering a
+`pgtype` codec that returns `numeric` as a string, or asserting bool as
+`"t"`/`"f"`, turns the relevant leg RED).
+(`TestIntegration_CollectorTypeContractAgainstRealPG`)
+
+---
+
+### TC-OC-11: Every audited type class is accounted for (no silent type gap)
+
+**Rule:** OC-R010 (normal / boundary — the #320 type-class coverage map)
+
+**Scenario:** After collection + export, every audited type class is
+classified: asserted (≥1 seeded non-null combination) or not-exercised
+with a reason.
+
+**Given:**
+- A collected + exported snapshot ZIP and the audited type-class map.
+
+**When:**
+- Each audited type class (numeric, jsonb, array, FDW-option-object,
+  timestamp, oid, bool, bytea) is looked up.
+
+**Then:**
+- Each class with a collector column has ≥1 asserted combination.
+- `bytea` is recorded not-exercised (no collector emits a `bytea`
+  column); version/capability-gated columns absent from this
+  environment are covered by the OC-R008 zero-row accounting and never
+  produce a false failure.
+- The harness logs a per-class coverage report (asserted combinations
+  and not-exercised reasons).
+
+**Expected Result:** Pass when every class is classified; RED if an
+audited class has zero asserted combinations and no not-exercised
+reason.
+(`TestIntegration_CollectorTypeContractAgainstRealPG`)

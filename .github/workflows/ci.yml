@@ -127,16 +127,23 @@ jobs:
           CREATE EXTENSION IF NOT EXISTS postgres_fdw;
           SQL
 
-      - name: Run collector output-contract integration test
+      - name: Run collector output-contract + type-contract integration tests
         env:
           # #326: optional superuser DSN the harness uses ONLY to
           # provision the FDW capability (foreign server + USAGE grant)
           # that a pg_monitor role cannot create itself. Collection still
           # runs as the non-superuser `signals` role (SIGNALS_TEST_PG_DSN).
           SIGNALS_TEST_PG_SUPERUSER_DSN: "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable"
+        # #320: the type-contract harness
+        # (TestIntegration_CollectorTypeContractAgainstRealPG) locks the
+        # PostgreSQL type classes beyond internal-"char" (numeric, jsonb,
+        # arrays, timestamps, oid, bool) — it runs in the same PG 14-18
+        # matrix as the output-contract harness. The -run anchors on the
+        # shared prefix so both TestIntegration_CollectorOutputContract...
+        # and ...CollectorTypeContract... execute.
         run: >
           go test -tags integration -count=1 -v
-          -run TestIntegration_CollectorOutputContractAgainstRealPG
+          -run 'TestIntegration_Collector(Output|Type)ContractAgainstRealPG'
           ./tests/
 
       # #329: production-path lock for budget exhaustion mid-query
