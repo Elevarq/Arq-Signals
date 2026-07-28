@@ -29,6 +29,17 @@
 //     per-column ::text sweep missed (relkind in the bloat collectors,
 //     provolatile AS volatility in pg_functions_v1, attidentity in
 //     pg_identity_columns_v1) decode as STRINGS, never JSON numbers.
+//   - OC-R006 / INV-05 (#326): the remaining internal-"char" schema
+//     collectors #314 missed — pg_partitions_v1.partition_strategy,
+//     pg_triggers_v1/_definitions_v1.tg_enabled, and
+//     pg_functions_v1/_definitions_v1.volatility — decode as single-char
+//     STRINGS. A seeded partitioned table, trigger, and function make
+//     each emit rows.
+//   - OC-R007 / INV-05 (#326, capability-gated): when a superuser DSN
+//     (SIGNALS_TEST_PG_SUPERUSER_DSN) provisions postgres_fdw + a server,
+//     a seeded foreign table makes fdw_foreign_tables_v1.relkind decode
+//     as the string "f"; absent the capability the assertion is skipped
+//     with a documented reason.
 //
 // Gated by the `integration` build tag and SIGNALS_TEST_PG_DSN (skips
 // locally when unset), matching signals_integration_test.go. In CI it
@@ -68,14 +79,31 @@ import (
 // internalCharColumns are the PostgreSQL internal-"char" columns the
 // #313 fix cast ::text. pgx scans an uncast "char" as an integer byte,
 // so any of these appearing as a JSON number in a payload is the #312
-// regression. Names are the exported column aliases in the collector
-// SQL.
+// regression. Names are the exported column ALIASES in the collector
+// SQL — the whitelist keys the OUTPUT column name, so the function
+// volatility field is "volatility" (its alias), never "provolatile".
+//
+// #326 adds the aliases the remaining schema collectors expose but the
+// #314 fixtures never exercised: partition_strategy (pg_partitions_v1,
+// from partstrat), tg_enabled (pg_triggers_v1 /
+// pg_triggers_definitions_v1, from tgenabled), volatility
+// (pg_functions_v1 / pg_functions_definitions_v1, the OUTPUT alias of
+// provolatile), and attidentity (pg_identity_columns_v1). relkind
+// already covers fdw_foreign_tables_v1 once that collector is seeded.
 var internalCharColumns = map[string]bool{
-	"contype":        true,
-	"relkind":        true,
-	"relpersistence": true,
-	"provolatile":    true,
-	"prokind":        true,
+	"contype":            true,
+	"relkind":            true,
+	"relpersistence":     true,
+	"provolatile":        true,
+	"prokind":            true,
+	"partition_strategy": true, // pg_partitions_v1 (from partstrat) — #326
+	"tg_enabled":         true, // pg_triggers_v1 / _definitions_v1 (from tgenabled) — #326
+	"volatility":         true, // pg_functions_v1 / _definitions_v1 (OUTPUT alias of provolatile) — #326
+	// NOTE: attidentity is deliberately NOT in this map. The non-set
+	// identity case is the empty string "" (a legitimate, non-numeric
+	// value), which the generic single-char sweep below would reject.
+	// It is instead asserted by the dedicated assertStringCol(...,
+	// allowEmpty=true) call for pg_identity_columns_v1 (OC-R005). #326.
 }
 
 // declaredColumnsByCollector is the subset of spec-declared columns
@@ -92,6 +120,37 @@ var declaredColumnsByCollector = map[string][]string{
 		"relid", "schemaname", "relname", "relkind", "relpersistence",
 		"relispartition", "relhasindex",
 	},
+	// #326 — the remaining internal-"char" schema collectors the
+	// representative fixture now makes emit rows. Columns per each
+	// collector's spec "Output columns" table (kept to the always-present
+	// structural set + the aliased char column under test).
+	"pg_partitions_v1": {
+		"parent_schema", "parent_name", "partition_strategy",
+		"partition_key", "child_schema", "child_name", "child_bounds",
+	},
+	"pg_triggers_v1": {
+		"schemaname", "relname", "tgname", "tgtype",
+		"tg_funcschema", "tg_funcname", "tg_enabled",
+	},
+	"pg_functions_v1": {
+		"schemaname", "proname", "identity_args", "return_type",
+		"language", "volatility", "security_definer", "is_strict",
+		"prokind",
+	},
+	"pg_identity_columns_v1": {
+		"schemaname", "relname", "attname", "atttypname", "attidentity",
+		"atthasdef", "default_is_nextval", "auto_owned_sequence",
+		"is_primary_key", "is_unique",
+	},
+}
+
+// fdwForeignTablesDeclaredColumns is asserted only when the FDW
+// capability is available (OC-R007) — the collector emits no rows and
+// no payload without a seeded foreign table, so it cannot live in the
+// unconditional declaredColumnsByCollector map.
+var fdwForeignTablesDeclaredColumns = []string{
+	"schemaname", "table_name", "table_oid", "relkind",
+	"server_name", "fdw_name", "foreign_table_options",
 }
 
 // exportedRun mirrors the query_runs.ndjson row shape emitted by
@@ -118,7 +177,7 @@ func TestIntegration_CollectorOutputContractAgainstRealPG(t *testing.T) {
 		t.Skip("SIGNALS_TEST_PG_DSN not set — skipping live PostgreSQL integration test")
 	}
 
-	seedRepresentativeSchema(t, dsn)
+	fdwSeeded := seedRepresentativeSchema(t, dsn)
 
 	connCfg, err := pgx.ParseConfig(dsn)
 	if err != nil {
@@ -172,6 +231,12 @@ func TestIntegration_CollectorOutputContractAgainstRealPG(t *testing.T) {
 		30,
 		collector.WithTargetTimeout(90*time.Second),
 		collector.WithQueryTimeout(20*time.Second),
+		// #326: enable the HighSensitivity definition-text collectors so
+		// pg_triggers_definitions_v1 and pg_functions_definitions_v1 run
+		// and their tg_enabled / volatility aliases are asserted too
+		// (they are off by default). The seeded schema carries no
+		// secrets, so exercising the definition bodies is safe here.
+		collector.WithHighSensitivityCollectors(true),
 	)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -355,6 +420,51 @@ func TestIntegration_CollectorOutputContractAgainstRealPG(t *testing.T) {
 	// attidentity: may be "" (non-set) or a single char (a/d).
 	assertStringCol("pg_identity_columns_v1", "attidentity", true)
 
+	// --- OC-R006 / INV-05 (the #326 schema-family char lock) -------
+	// The remaining schema collectors that alias an internal-"char"
+	// column but the #314 fixtures never exercised. The seeded
+	// partitioned table, trigger, and function make each emit a row; the
+	// aliased char value must decode as a single, non-empty character
+	// string, never a number. These go RED with the OID-18 AfterConnect
+	// registration removed and GREEN with it in place.
+	//
+	//   - partition_strategy (pg_partitions_v1, from partstrat) — 'r' for
+	//     the RANGE-partitioned events table,
+	//   - tg_enabled (pg_triggers_v1 / _definitions_v1, from tgenabled) —
+	//     'O' for the enabled BEFORE INSERT trigger,
+	//   - volatility (pg_functions_v1 / _definitions_v1, the OUTPUT alias
+	//     of provolatile) — 'i' for the IMMUTABLE function.
+	assertStringCol("pg_partitions_v1", "partition_strategy", false)
+	assertStringCol("pg_triggers_v1", "tg_enabled", false)
+	assertStringCol("pg_triggers_definitions_v1", "tg_enabled", false)
+	assertStringCol("pg_functions_v1", "volatility", false)
+	assertStringCol("pg_functions_definitions_v1", "volatility", false)
+
+	// --- OC-R007 / INV-05 (the #326 FDW leg, capability-gated) ------
+	// fdw_foreign_tables_v1.relkind is always 'f' (a single char). Only
+	// asserted when the FDW capability was provisioned (a superuser DSN
+	// created the extension + server + granted USAGE); otherwise the
+	// fixture was skipped with a documented reason and the collector
+	// emits no rows.
+	if fdwSeeded {
+		assertStringCol("fdw_foreign_tables_v1", "relkind", false)
+		// The FDW collector's declared columns are present in its payload
+		// (OC-R002 extended to the capability-gated collector).
+		if payload, ok := payloadByQueryID["fdw_foreign_tables_v1"]; ok && len(payload) > 0 {
+			row := payload[0]
+			for _, col := range fdwForeignTablesDeclaredColumns {
+				if _, present := row[col]; !present {
+					t.Errorf("OC-R002 (INV-OUTPUT-CONTRACT): collector fdw_foreign_tables_v1 payload is missing declared column %q; keys present=%v",
+						col, keysOf(row))
+				}
+			}
+		} else {
+			t.Error("OC-R007: FDW capability was provisioned but fdw_foreign_tables_v1 produced no payload — the seeded foreign table should have made it emit a row")
+		}
+	} else {
+		t.Log("OC-R007: FDW capability absent — fdw_foreign_tables_v1.relkind assertion skipped (documented capability gate)")
+	}
+
 	// --- OC-R002 / INV-OUTPUT-CONTRACT -----------------------------
 	// Each char-type catalog collector's declared columns are present.
 	for collectorID, cols := range declaredColumnsByCollector {
@@ -381,7 +491,13 @@ func TestIntegration_CollectorOutputContractAgainstRealPG(t *testing.T) {
 // table whose FK to the parent is UNINDEXED, plus a non-PK index and
 // columns of varied types. The unindexed FK is what makes
 // pg_constraint emit a contype='f' row — the exact #312 fixture.
-func seedRepresentativeSchema(t *testing.T, dsn string) {
+//
+// #326 extends it with a partitioned table, a user trigger, and a SQL
+// function so the remaining internal-"char" schema collectors emit rows,
+// and — when the FDW capability is available — a foreign table. It
+// returns whether the FDW fixture was seeded so the caller can
+// capability-gate the fdw_foreign_tables_v1.relkind assertion (OC-R007).
+func seedRepresentativeSchema(t *testing.T, dsn string) (fdwSeeded bool) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -434,6 +550,28 @@ func seedRepresentativeSchema(t *testing.T, dsn string) {
 		`CREATE FUNCTION signals_oc_test.demo_immutable(x integer)
 			RETURNS integer LANGUAGE sql IMMUTABLE
 			AS 'SELECT x + 1'`,
+		// A RANGE-partitioned table with one child partition so
+		// pg_partitions_v1 emits a row carrying partition_strategy
+		// (partstrat AS partition_strategy — raw "char", 'r' for RANGE).
+		// The remaining internal-"char" schema collectors #314 missed.
+		// #326.
+		`CREATE TABLE signals_oc_test.events (
+			id  bigint NOT NULL,
+			ts  timestamptz NOT NULL
+		) PARTITION BY RANGE (ts)`,
+		`CREATE TABLE signals_oc_test.events_2026
+			PARTITION OF signals_oc_test.events
+			FOR VALUES FROM ('2026-01-01') TO ('2027-01-01')`,
+		// A trigger function + a user (non-internal) BEFORE INSERT row
+		// trigger so pg_triggers_v1 / pg_triggers_definitions_v1 emit a
+		// row carrying tg_enabled (tgenabled AS tg_enabled — raw "char",
+		// 'O' for an origin/enabled trigger). #326.
+		`CREATE FUNCTION signals_oc_test.tg_noop()
+			RETURNS trigger LANGUAGE plpgsql
+			AS 'BEGIN RETURN NEW; END'`,
+		`CREATE TRIGGER child_bi
+			BEFORE INSERT ON signals_oc_test.child
+			FOR EACH ROW EXECUTE FUNCTION signals_oc_test.tg_noop()`,
 		`INSERT INTO signals_oc_test.parent (id, label, ratio)
 			VALUES (1, 'a', 1.5), (2, 'b', 2.5)`,
 		`INSERT INTO signals_oc_test.child (id, fk_parent_id, note, amount)
@@ -445,6 +583,30 @@ func seedRepresentativeSchema(t *testing.T, dsn string) {
 		`ANALYZE signals_oc_test.child`,
 		`ANALYZE signals_oc_test.identity_demo`,
 	}
+
+	// --- FDW capability (OC-R007) ---------------------------------------
+	// fdw_foreign_tables_v1 only emits a row when a foreign table exists.
+	// A pg_monitor collector role cannot CREATE EXTENSION postgres_fdw or
+	// a FOREIGN DATA WRAPPER itself, so the extension + a foreign SERVER +
+	// a USAGE grant are provisioned via an OPTIONAL superuser DSN
+	// (SIGNALS_TEST_PG_SUPERUSER_DSN). The foreign table itself is then
+	// created by the collector role (pool) so the fixture stays in the
+	// dedicated schema. When the capability is unavailable the fixture is
+	// skipped and the caller capability-gates the relkind assertion.
+	fdwSeeded = provisionFDWCapability(t, ctx)
+	if fdwSeeded {
+		// The foreign table's remote target need not exist — the collector
+		// reads only local catalog metadata (pg_class.relkind='f'), never
+		// the remote data (see fdw_foreign_tables_v1.md). #326.
+		stmts = append(stmts,
+			`CREATE FOREIGN TABLE signals_oc_test.remote_events (
+				id bigint,
+				ts timestamptz
+			) SERVER signals_oc_test_fdw_srv
+			  OPTIONS (schema_name 'public', table_name 'nonexistent_ok')`,
+		)
+	}
+
 	for _, s := range stmts {
 		if _, err := pool.Exec(ctx, s); err != nil {
 			t.Fatalf("seed stmt failed: %v\nSQL: %s", err, s)
@@ -460,6 +622,85 @@ func seedRepresentativeSchema(t *testing.T, dsn string) {
 		defer p.Close()
 		_, _ = p.Exec(cctx, `DROP SCHEMA IF EXISTS signals_oc_test CASCADE`)
 	})
+	return fdwSeeded
+}
+
+// provisionFDWCapability provisions the postgres_fdw extension, a
+// dedicated foreign server, and a USAGE grant to the collector role,
+// using the OPTIONAL SIGNALS_TEST_PG_SUPERUSER_DSN superuser connection.
+// It reports whether the FDW capability is available for the fixture.
+//
+// Returns false (documented skip, OC-R007) when the superuser DSN is
+// unset or the extension is unavailable — the harness then omits the
+// foreign-table fixture and capability-gates fdw_foreign_tables_v1.relkind.
+// The provisioning is idempotent and touches only the dedicated server;
+// collection itself still runs as the non-superuser collector role
+// (INV-02 / INV-06 hold).
+func provisionFDWCapability(t *testing.T, ctx context.Context) bool {
+	t.Helper()
+
+	superDSN := os.Getenv("SIGNALS_TEST_PG_SUPERUSER_DSN")
+	if superDSN == "" {
+		t.Log("OC-R007: SIGNALS_TEST_PG_SUPERUSER_DSN unset — skipping FDW fixture (fdw_foreign_tables_v1.relkind assertion is capability-gated)")
+		return false
+	}
+
+	collectorRole := collectorRoleFromDSN(t)
+	if collectorRole == "" {
+		t.Log("OC-R007: could not resolve the collector role from SIGNALS_TEST_PG_DSN — skipping FDW fixture")
+		return false
+	}
+
+	sp, err := pgxpool.New(ctx, superDSN)
+	if err != nil {
+		t.Logf("OC-R007: superuser connect failed (%v) — skipping FDW fixture", err)
+		return false
+	}
+	defer sp.Close()
+
+	// Idempotent: drop a stale server, (re)create the extension + server,
+	// and grant USAGE. CREATE EXTENSION / FOREIGN DATA WRAPPER need
+	// superuser — hence the separate DSN.
+	superStmts := []string{
+		`DROP SERVER IF EXISTS signals_oc_test_fdw_srv CASCADE`,
+		`CREATE EXTENSION IF NOT EXISTS postgres_fdw`,
+		`CREATE SERVER signals_oc_test_fdw_srv
+			FOREIGN DATA WRAPPER postgres_fdw
+			OPTIONS (host 'localhost', port '5432', dbname 'postgres')`,
+		fmt.Sprintf(`GRANT USAGE ON FOREIGN SERVER signals_oc_test_fdw_srv TO %s`,
+			pgx.Identifier{collectorRole}.Sanitize()),
+	}
+	for _, s := range superStmts {
+		if _, err := sp.Exec(ctx, s); err != nil {
+			t.Logf("OC-R007: FDW provisioning failed (%v) on: %s — skipping FDW fixture", err, s)
+			return false
+		}
+	}
+
+	// Retire the server on cleanup so repeated runs stay clean.
+	t.Cleanup(func() {
+		cctx, ccancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer ccancel()
+		p, err := pgxpool.New(cctx, superDSN)
+		if err != nil {
+			return
+		}
+		defer p.Close()
+		_, _ = p.Exec(cctx, `DROP SERVER IF EXISTS signals_oc_test_fdw_srv CASCADE`)
+	})
+	return true
+}
+
+// collectorRoleFromDSN returns the role name the collector authenticates
+// as, parsed from SIGNALS_TEST_PG_DSN, so the USAGE grant targets exactly
+// that role.
+func collectorRoleFromDSN(t *testing.T) string {
+	t.Helper()
+	cfg, err := pgx.ParseConfig(os.Getenv("SIGNALS_TEST_PG_DSN"))
+	if err != nil {
+		return ""
+	}
+	return cfg.User
 }
 
 func readRuns(t *testing.T, zr *zip.Reader) []exportedRun {

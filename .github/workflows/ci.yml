@@ -109,13 +109,27 @@ jobs:
           # Least-privilege monitoring role: LOGIN + pg_monitor, no
           # superuser/replication/bypassrls. CREATE on the database lets
           # the test seed its own dedicated schema; nothing else.
+          #
+          # #326: the postgres_fdw extension is created here (it needs
+          # superuser) so the harness's FDW leg (OC-R007) is exercised
+          # in the matrix — the test then provisions a foreign server +
+          # grants USAGE via SIGNALS_TEST_PG_SUPERUSER_DSN and seeds a
+          # foreign table as the `signals` role. Without this the FDW
+          # assertion is a documented skip.
           psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
           CREATE ROLE signals WITH LOGIN PASSWORD 'signals';
           GRANT pg_monitor TO signals;
           GRANT CREATE ON DATABASE postgres TO signals;
+          CREATE EXTENSION IF NOT EXISTS postgres_fdw;
           SQL
 
       - name: Run collector output-contract integration test
+        env:
+          # #326: optional superuser DSN the harness uses ONLY to
+          # provision the FDW capability (foreign server + USAGE grant)
+          # that a pg_monitor role cannot create itself. Collection still
+          # runs as the non-superuser `signals` role (SIGNALS_TEST_PG_DSN).
+          SIGNALS_TEST_PG_SUPERUSER_DSN: "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable"
         run: >
           go test -tags integration -count=1 -v
           -run TestIntegration_CollectorOutputContractAgainstRealPG

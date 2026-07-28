@@ -136,6 +136,74 @@ removed; GREEN with it in place.
 
 ---
 
+### TC-OC-07: Remaining schema collectors decode their aliased char columns as strings
+
+**Rule:** OC-R006 (normal — the #326 schema-family regression lock)
+
+**Scenario:** A target is seeded so the schema collectors #314 missed
+emit rows: a partitioned table (so `pg_partitions_v1` emits
+`partition_strategy`), a user trigger (so `pg_triggers_v1` /
+`pg_triggers_definitions_v1` emit `tg_enabled`), and a SQL function (so
+`pg_functions_v1` / `pg_functions_definitions_v1` emit `volatility`).
+The exported payloads are inspected.
+
+**Given:**
+- A live target carrying a `PARTITION BY RANGE` table with a child
+  partition, a `BEFORE INSERT` row trigger, and a SQL function.
+
+**When:**
+- The full collection runs and a snapshot ZIP is exported via
+  `export.Builder.WriteTo`; `query_results.ndjson` is read back.
+
+**Then:**
+- `pg_partitions_v1.partition_strategy` is a single-character string
+  (e.g. `"r"` for RANGE), never a number.
+- `pg_triggers_v1.tg_enabled` and `pg_triggers_definitions_v1.tg_enabled`
+  are single-character strings (e.g. `"O"`), never a number.
+- `pg_functions_v1.volatility` and `pg_functions_definitions_v1.volatility`
+  are single-character strings (e.g. `"i"`), never a number.
+- Each of these collectors emits at least one such value (the sweep is
+  not vacuously satisfied).
+
+**Expected Result:** RED with the OID-18 `AfterConnect` registration
+removed; GREEN with it in place.
+(`TestIntegration_CollectorOutputContractAgainstRealPG`)
+
+---
+
+### TC-OC-08: FDW foreign-table relkind is a string (capability-gated)
+
+**Rule:** OC-R007 (normal / capability-gated — the #326 FDW leg)
+
+**Scenario:** When the environment provides the FDW capability (a
+superuser DSN provisions `postgres_fdw` + a foreign server + grants
+USAGE to the collector role), a foreign table is seeded so
+`fdw_foreign_tables_v1` emits a row; otherwise the FDW fixture and
+assertion are skipped with a documented reason.
+
+**Given:**
+- `SIGNALS_TEST_PG_SUPERUSER_DSN` present and the `postgres_fdw`
+  extension available (CI provisions both).
+
+**When:**
+- The full collection runs and a snapshot ZIP is exported; the
+  `fdw_foreign_tables_v1` payload is read back.
+
+**Then:**
+- `fdw_foreign_tables_v1.relkind` is the single-character string `"f"`,
+  never a number.
+
+**And (capability absent):**
+- With no superuser DSN / no `postgres_fdw`, the FDW fixture is not
+  created and the assertion is skipped with a logged reason; every other
+  assertion still runs.
+
+**Expected Result:** Pass when the capability is present; documented
+skip otherwise.
+(`TestIntegration_CollectorOutputContractAgainstRealPG`)
+
+---
+
 ### TC-OC-05: Skips locally, runs in the CI matrix
 
 **Rule:** Constraints (env-gating)

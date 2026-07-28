@@ -27,7 +27,11 @@ GREEN after.
 Scope is the **catalog/schema collectors** (`Category == "schema"`),
 with emphasis on the internal-`"char"` collectors PR #313 touched
 (`pg_constraints_v1`, `pg_class_storage_v1`, `pg_functions_v1`,
-`pg_functions_definitions_v1`, `pg_proc_config_v1`). The remaining
+`pg_functions_definitions_v1`, `pg_proc_config_v1`) **and the remaining
+schema collectors that alias an internal-`"char"` column** but were not
+exercised by the #314 fixtures (#326): `pg_partitions_v1`
+(`partition_strategy`), `pg_triggers_v1` / `pg_triggers_definitions_v1`
+(`tg_enabled`), and `fdw_foreign_tables_v1` (`relkind`). The remaining
 non-schema collectors are an explicit fast-follow (see
 Non-Functional Requirements).
 
@@ -46,7 +50,19 @@ and §"Collector output-contract verification (#314)"
 - Representative schema seeded into the target before collection:
   a parent table with a primary key, a child table whose foreign key to
   the parent is **unindexed** (so `pg_constraint` emits a `contype='f'`
-  row), at least one non-PK index, and columns of varied types.
+  row), at least one non-PK index, and columns of varied types; plus a
+  **partitioned table**, a user-defined **trigger**, a SQL **function**,
+  and an **identity column** so the remaining internal-`"char"` schema
+  collectors (`pg_partitions_v1`, `pg_triggers_v1` /
+  `pg_triggers_definitions_v1`, `pg_functions_v1` /
+  `pg_functions_definitions_v1`, `pg_identity_columns_v1`) each emit a
+  row. The seed runs as the non-superuser collector role.
+- An optional superuser DSN (`SIGNALS_TEST_PG_SUPERUSER_DSN`) used ONLY
+  to provision the FDW capability that a `pg_monitor` role cannot create
+  itself (`CREATE EXTENSION postgres_fdw` + a foreign `SERVER` +
+  `GRANT USAGE` to the collector role). When absent, the FDW fixture and
+  its `fdw_foreign_tables_v1.relkind` assertion are capability-gated and
+  skipped (OC-R007); every other assertion still runs.
 
 ### Outputs
 
@@ -78,6 +94,23 @@ and §"Collector output-contract verification (#314)"
   `attidentity` the empty string for the non-set case), never a JSON
   number — because the connection boundary decodes OID 18 as text for
   every collector, not just the columns hand-cast with `::text`.
+- **Given** a target seeded with a **partitioned table**, a
+  user-defined **trigger**, and a SQL **function**, **when** the ZIP is
+  read back, **then** `pg_partitions_v1.partition_strategy` (from
+  `pg_partitioned_table.partstrat`), `pg_triggers_v1.tg_enabled` /
+  `pg_triggers_definitions_v1.tg_enabled` (from `pg_trigger.tgenabled`),
+  and `pg_functions_v1.volatility` / `pg_functions_definitions_v1.volatility`
+  (from `pg_proc.provolatile`) each decode as a single-character string,
+  never a JSON number — extending the OID-18 boundary lock across the
+  remaining schema collectors that alias an internal-`"char"` column.
+- **Given** the target additionally exposes the FDW capability (a
+  `postgres_fdw` foreign server the collector role may create a foreign
+  table against), **when** the ZIP is read back, **then**
+  `fdw_foreign_tables_v1.relkind` (from `pg_class.relkind`) decodes as
+  the single-character string `"f"`, never a JSON number. When the
+  environment cannot provide the FDW capability the FDW assertion is
+  capability-gated and skipped with a documented reason — the remaining
+  schema-collector char assertions still run.
 
 ## Rules
 
@@ -112,6 +145,31 @@ and §"Collector output-contract verification (#314)"
   protocol's inability to carry an embedded NUL). This closes the class
   the leaky per-column `::text` approach could not (#319, follow-up to
   #312/#313; root cause of Elevarq/Analyzer#1871).
+- **OC-R006 — Char sweep covers the remaining schema collectors.** The
+  internal-`"char"` output-column whitelist the harness sweeps shall
+  include the aliases the remaining schema collectors expose — not only
+  the raw catalog names. Specifically it shall include
+  `partition_strategy` (`pg_partitions_v1`, from `partstrat`),
+  `tg_enabled` (`pg_triggers_v1` / `pg_triggers_definitions_v1`, from
+  `tgenabled`), `volatility` (`pg_functions_v1` /
+  `pg_functions_definitions_v1`, the **output alias** of `provolatile`),
+  and `attidentity` (`pg_identity_columns_v1`). Because the whitelist
+  keys the **exported column name**, the function alias is
+  `volatility`, never `provolatile`. The harness shall seed a
+  partitioned table, a user trigger, a SQL function, and an identity
+  column so each of these collectors emits at least one row, and shall
+  assert each aliased char value decodes as a single-character string
+  (or the empty string for the non-set `attidentity`), never a JSON
+  number. This regression-locks #319 for the whole char family across
+  the schema collectors #314 missed (#326).
+- **OC-R007 — FDW char is capability-gated.** When the environment
+  provides the FDW capability — a `postgres_fdw` foreign server the
+  collector role may create a foreign table against — the harness shall
+  seed a foreign table so `fdw_foreign_tables_v1` emits a row and shall
+  assert its `relkind` decodes as the single-character string `"f"`.
+  When the capability is absent (no superuser provisioning of the
+  extension/server) the FDW assertion is skipped with a documented
+  reason; the OC-R006 schema-collector assertions still run. (#326.)
 
 ## Invariants
 
@@ -131,6 +189,20 @@ and §"Collector output-contract verification (#314)"
   registration removed (columns #313 left uncast decode as numbers) and
   pass with it in place, independent of the redundant per-column
   `::text` casts.
+- **INV-05** — The OC-R006 schema-collector char assertions
+  (`partition_strategy`, `tg_enabled`, `volatility`) and, when the
+  capability is present, the OC-R007 `fdw_foreign_tables_v1.relkind`
+  assertion are the same regression lock extended across the remaining
+  schema collectors: each aliased internal-`"char"` value decodes as a
+  single-character string, never a JSON number, so reverting the OID-18
+  `AfterConnect` registration turns them RED. The FDW leg is
+  capability-gated — its absence never fails the run, but when the
+  capability is present the assertion is mandatory.
+- **INV-06** — The FDW-capability provisioning uses a separate,
+  optional superuser DSN and touches only a dedicated FDW server + a
+  `GRANT USAGE`; collection itself still runs as the non-superuser
+  collector role (INV-02 holds — no writes and no superuser during
+  collection).
 
 ## Failure conditions
 
@@ -140,6 +212,11 @@ and §"Collector output-contract verification (#314)"
   (e.g. `contype == 102`) fails OC-R003.
 - **FC-03** — A `status="success"`/`row_count=N` run with no joinable
   payload, or a payload whose row count ≠ N, fails OC-R004.
+- **FC-04** — An aliased schema-collector internal-`"char"` value
+  (`partition_strategy`, `tg_enabled`, `volatility`, or, when the FDW
+  capability is present, `fdw_foreign_tables_v1.relkind`) decoding as a
+  JSON number, or one of the seeded schema collectors emitting no such
+  value at all, fails OC-R006 / OC-R007.
 
 ## Constraints
 
