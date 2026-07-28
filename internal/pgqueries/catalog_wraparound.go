@@ -47,8 +47,7 @@ func init() {
 		SQL: `SELECT
 			n.nspname                                      AS schema,
 			c.relname,
-			c.relkind,
-			c.oid,
+			c.relkind::text AS relkind,			c.oid,
 			COALESCE(pg_relation_size(c.oid), 0)           AS table_bytes,
 			COALESCE(pg_total_relation_size(c.oid), 0)     AS total_bytes,
 			age(c.relfrozenxid)                            AS rel_xid_age,

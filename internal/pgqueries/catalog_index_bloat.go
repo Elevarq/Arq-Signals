@@ -83,8 +83,7 @@ SELECT
     e.tablename,
     e.indexname,
     e.index_oid,
-    e.relkind,
-    e.actual_size_bytes,
+    e.relkind::text AS relkind,    e.actual_size_bytes,
     e.expected_size_bytes,
     CASE
         WHEN e.expected_size_bytes IS NULL THEN 0::bigint

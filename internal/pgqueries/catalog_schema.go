@@ -40,11 +40,11 @@ func init() {
 			n.nspname AS schemaname,
 			c.relname,
 			con.conname,
-			con.contype,
+			con.contype::text AS contype,
 			pg_get_constraintdef(con.oid, true) AS condef,
 			a.attname AS column_name,
 			ord.ordinality::int AS column_position,
-			c.relkind,
+			c.relkind::text AS relkind,
 			COALESCE(s.n_live_tup, 0)::bigint AS n_live_tup,
 			COALESCE(rc.relname, '') AS confrelname,
 			COALESCE(rn.nspname, '') AS confschemaname
@@ -637,8 +637,7 @@ func init() {
 			p.provolatile AS volatility,
 			p.prosecdef AS security_definer,
 			p.proisstrict AS is_strict,
-			p.prokind
-		FROM pg_proc p
+			p.prokind::text AS prokind		FROM pg_proc p
 		JOIN pg_namespace n ON n.oid = p.pronamespace
 		JOIN pg_language l ON l.oid = p.prolang
 		WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
@@ -670,8 +669,7 @@ func init() {
 			p.provolatile AS volatility,
 			p.prosecdef AS security_definer,
 			p.proisstrict AS is_strict,
-			p.prokind,
-			p.prosrc AS body
+			p.prokind::text AS prokind,			p.prosrc AS body
 		FROM pg_proc p
 		JOIN pg_namespace n ON n.oid = p.pronamespace
 		JOIN pg_language l ON l.oid = p.prolang
