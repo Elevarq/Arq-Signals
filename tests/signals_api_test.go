@@ -147,8 +147,12 @@ func TestCollectNowEndpoint(t *testing.T) {
 // TestExportEndpoint verifies GET /export with valid token returns application/zip content type.
 // Traces: SIGNALS-R011 / TC-SIG-018
 func TestExportEndpoint(t *testing.T) {
-	handler, cleanup := makeTestHandler(t)
+	handler, store, cleanup := makeTestHandlerWithStore(t)
 	defer cleanup()
+
+	// FC-05/R125: seed successful data so the default export returns a
+	// ZIP rather than the no-data refusal (422).
+	seedOneSuccessfulSnapshot(t, store)
 
 	req := httptest.NewRequest("GET", "/export", nil)
 	req.Header.Set("Authorization", "Bearer "+testAPIToken)

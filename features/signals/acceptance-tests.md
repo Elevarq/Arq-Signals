@@ -252,13 +252,19 @@ consistent keys matching the PostgreSQL view columns.
 
 ---
 
-## TC-SIG-024: Empty Collection Export
+## TC-SIG-024: No-data Default Export Is Refused (No False-Clean)
 
-**Linked Rules:** SIGNALS-R006, FC-05
-**Scenario:** Export when no collection data exists
-**Inputs:** Fresh system with no snapshots
-**Expected Behavior:** ZIP is created with metadata.json only (or with
-empty NDJSON files). No error is returned.
+**Linked Rules:** SIGNALS-R006, SIGNALS-R125, FC-05
+**Scenario:** Default-scope export when no successful collection data
+exists on a fresh system.
+**Inputs:** Fresh system with no snapshots and no recorded cycle
+outcome; `GET /export` with no selector parameters.
+**Expected Behavior:** The export is **refused** — HTTP 422 with a JSON
+body `{"error": ..., "reason": "no_collection_yet"}`. No ZIP is
+produced. An `export_rejected` audit event is emitted. A clean, empty
+ZIP is **never** returned for the default scope with no data.
+**Failure Expectation:** Returning HTTP 200 with a clean empty ZIP (the
+pre-fix behavior) regresses FC-05 / R125.
 
 ---
 
@@ -1249,3 +1255,72 @@ empty required flags.
 **Failure Expectation:** A method without guidance, a second method
 slipping through, blocking on input, or dialing on a usage error
 regresses AC008/INV004/FC006.
+
+---
+
+## TC-SIG-126: Failed Cycle Persists Last-Cycle Outcome
+
+**Linked Rules:** SIGNALS-R126
+**Scenario:** A collection cycle fails entirely for an enabled target
+(target unreachable / auth failure / role-safety failure → zero
+successful collectors, no snapshot persisted).
+**Inputs:** A configured, enabled target whose cycle returns a hard
+error before any snapshot is written.
+**Expected Behavior:** A durable last-cycle-outcome record is written
+for that target with `status = "failed"` and a failure `category` from
+the bounded set (`connect_error` / `safety_check` /
+`version_unsupported` / `timeout_setup` / `persistence` / `internal`)
+and a timestamp. It contains no credentials, DSN, or secret material. A
+later successful cycle for the same target clears the marker (last
+outcome becomes `success`).
+**Failure Expectation:** A failed cycle that leaves no persisted
+outcome (log-only, the pre-fix behavior) regresses R126 and re-opens
+the false-clean gap.
+
+---
+
+## TC-SIG-127: Failed-Cycle Default Export Reports the Failure
+
+**Linked Rules:** SIGNALS-R125, FC-05
+**Scenario:** Default-scope export after the last collection cycle
+failed entirely and no successful data remains.
+**Inputs:** A persisted `failed` last-cycle outcome (TC-SIG-126) and no
+successful runs in the default scope; `GET /export` with no selectors.
+**Expected Behavior:** The export is refused — HTTP 422 with body
+`{"error": ..., "reason": "last_collection_failed"}` naming the failure
+category. An `export_rejected` audit event is emitted. The response
+distinguishes this from `no_collection_yet` (TC-SIG-024).
+**Failure Expectation:** Returning HTTP 200 with a clean empty ZIP, or
+an indistinguishable `no_collection_yet` reason, regresses R125.
+
+---
+
+## TC-SIG-128: Normal Export Unchanged (Regression Guard)
+
+**Linked Rules:** SIGNALS-R006, SIGNALS-R125
+**Scenario:** Default-scope export when at least one successful cycle
+has produced data.
+**Inputs:** A store containing successful query runs; `GET /export`
+with no selectors.
+**Expected Behavior:** HTTP 200 with a ZIP as before. `metadata.json`
+carries `collection_status = "ok"`. The six required files are present
+and unchanged in shape. No refusal.
+**Failure Expectation:** Refusing a default export that has successful
+data, or omitting/mis-setting `collection_status`, regresses R125/R006.
+
+---
+
+## TC-SIG-129: Forensic --all Scope Marks Emptiness, Not Refused
+
+**Linked Rules:** SIGNALS-R125, SIGNALS-R006, FC-05
+**Scenario:** `--all` export on a system with no successful data
+(fresh, or after a failed cycle).
+**Inputs:** `GET /export?all=true` on an empty / failed-only store.
+**Expected Behavior:** HTTP 200 with a ZIP (never refused — the
+forensic scope stays permissive). `metadata.json` carries
+`collection_status = "no_collection_yet"` or `"last_collection_failed"`
+so the emptiness/failure is machine-detectable, never a silent clean
+snapshot.
+**Failure Expectation:** Refusing the `--all` scope, or emitting a ZIP
+whose `collection_status` reads `ok` when there is no successful data,
+regresses R125.

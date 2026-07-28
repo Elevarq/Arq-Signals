@@ -86,7 +86,15 @@ collection run, including at minimum:
 **SIGNALS-R006**: The system shall package snapshots into a ZIP archive for
 transfer or storage. The archive shall contain metadata.json,
 collector_status.json, query_catalog.json, query_runs.ndjson, and
-query_results.ndjson.
+query_results.ndjson. A 2xx export shall never present a failed or
+absent collection as a clean, complete snapshot: when the requested
+scope has no successful collection data to package, the default scope
+(R084) is **refused** per SIGNALS-R125, and every emitted ZIP carries a
+top-level `collection_status` marker in metadata.json
+(`ok` / `no_collection_yet` / `last_collection_failed`) so a consumer
+can machine-detect emptiness or failure without inferring it from an
+absent snapshot. See SIGNALS-R125 (export refusal) and SIGNALS-R126
+(persisted last-cycle outcome).
 
 ### Safety
 
@@ -2589,6 +2597,75 @@ is recorded as a structured warning instead of an opaque
 | Query fails with SQLSTATE 42P01 / 42883 at execution | `failed` / `object_missing`; savepoint isolation preserves the rest of the cycle. |
 | Extension version string unparsable | Gate treats the version as unknown and does not block (fail-open to collection; the run-time `object_missing` path catches genuinely missing objects). |
 
+### No-false-clean export
+
+**SIGNALS-R125**: The default-scope export (R084, latest-per-collector)
+shall be **refused** — never served as a clean, complete ZIP — when it
+has no successful collection data to package. "No successful collection
+data" means the resolved default scope contains zero query runs from a
+completed cycle. On refusal the endpoint returns **HTTP 422
+Unprocessable Entity** with a JSON body `{"error": <message>,
+"reason": <marker>}` that distinguishes:
+
+- **`no_collection_yet`** — no enabled target has ever produced a
+  completed collection cycle. Message: no collection has run yet.
+- **`last_collection_failed`** — at least one enabled target's most
+  recent cycle failed entirely (SIGNALS-R126) and no successful data
+  remains. Message names the persisted failure category (the bounded
+  set of SIGNALS-R126: `connect_error` / `safety_check` /
+  `version_unsupported` / `timeout_setup` / `persistence` /
+  `internal`). When both
+  markers could apply, `last_collection_failed` takes precedence — a
+  broken collection is the more urgent, actionable signal than an
+  unstarted one.
+
+The refusal emits an `export_rejected` audit event mirroring the
+existing `export_requested` / `export_completed` style, carrying
+`actor`, `reason`, and `duration_ms`. The forensic `--all` /
+`--snapshot-id` / `--since`/`--until` selector scopes (R085) are **not**
+refused — they may legitimately return an empty or historical result —
+but every emitted `metadata.json` (all scopes) carries a top-level
+`collection_status` marker (`ok` / `no_collection_yet` /
+`last_collection_failed`) so a consumer never has to infer emptiness or
+failure from an absent snapshot row. This closes the false-clean gap
+with the consumer-side Analyzer guards (synthetic-completeness on absent
+`collector_status`, ingestion-integrity checks): a failed Signals
+collection surfaces as a machine-detectable failure, so those guards
+actually trip.
+
+### Failure conditions (R125)
+
+| Trigger | Response |
+|---------|----------|
+| Default-scope export, zero successful runs, no cycle ever ran | HTTP 422, `reason = no_collection_yet`; `export_rejected` audit. |
+| Default-scope export, zero successful runs, last cycle failed | HTTP 422, `reason = last_collection_failed` + failure category; `export_rejected` audit. |
+| Default-scope export with successful data present | HTTP 200 ZIP; `metadata.collection_status = ok`. |
+| `--all` / selector scope with no data | HTTP 200 ZIP; `metadata.collection_status` marks the emptiness/failure; never refused. |
+
+### Persisted last-cycle outcome
+
+**SIGNALS-R126**: When a collection cycle fails to produce any
+successful collector for a configured, enabled target (`cycleStatus =
+"failed"` — target unreachable, auth failure, role-safety failure, or
+any hard error that aborts the cycle before a snapshot is persisted),
+the system shall record the failure **durably**, keyed by target, so a
+later export can read it. The record carries the failure **category**
+and a timestamp. The category is drawn from the bounded,
+fixed-cardinality set already used for failure metrics —
+`connect_error` (unreachable target / failed auth handshake),
+`safety_check` (role-safety or version-safety block),
+`version_unsupported`, `timeout_setup`, `persistence`, `internal` — so
+it leaks no raw error text.
+A subsequent **successful** cycle for the same target clears the failure
+marker (the target's last outcome becomes `success`). This makes the
+"the collection BROKE" signal survive across process boundaries and the
+export/consumer boundary; today it is log-only, invisible to the export.
+
+The record is metadata only — it never contains credentials, DSNs, or
+secret material (INV-SIGNALS-07) — and its presence is what lets
+SIGNALS-R125 distinguish `last_collection_failed` from
+`no_collection_yet`.
+
 ## Invariants
 
 - **INV-SIGNALS-01**: Collector output is passive evidence, not interpretation.
@@ -2679,6 +2756,14 @@ is recorded as a structured warning instead of an opaque
   family rows are persisted, and every member is accounted for in
   `collector_status.json` with a structured skip reason — never
   silently absent, never a snapshot failure.
+- **INV-SIGNALS-25**: A 2xx export never presents a failed or absent
+  collection as a clean, complete snapshot (R125/R126). For the default
+  scope, "no successful data" is a refusal (HTTP 422), not a clean empty
+  ZIP; for every scope that does emit a ZIP, `metadata.collection_status`
+  is an unambiguous, machine-detectable marker of `ok` vs
+  `no_collection_yet` vs `last_collection_failed`. There is no producer
+  path that yields a clean, complete-looking ZIP from a failed or
+  never-run collection.
 
 ## Failure Conditions
 
@@ -2688,7 +2773,22 @@ is recorded as a structured warning instead of an opaque
   continue to next query
 - FC-03: Linter rejects a query at registration → process aborts
 - FC-04: Persistence write failure → log error, retry on next cycle
-- FC-05: Export with no data → produce empty ZIP with metadata only
+- FC-05: Default-scope export with no successful collection data → the
+  export is **refused** with a non-2xx error, never a clean empty ZIP
+  (SIGNALS-R125). A 2xx export must never present a failed or absent
+  collection as a clean/complete snapshot ("false-clean"). The error
+  distinguishes two cases: (a) **no collection has ever run** for any
+  enabled target → HTTP 422 with `reason = "no_collection_yet"`; (b) the
+  **last collection cycle failed** for an enabled target (target
+  unreachable / auth failure / role-safety failure → `cycleStatus =
+  "failed"`, zero successful collectors persisted) → HTTP 422 with
+  `reason = "last_collection_failed"` and the persisted failure reason
+  (SIGNALS-R126). The refusal emits an `export_rejected` audit event.
+  The forensic `--all` scope (R085) remains permissive — it still
+  produces a ZIP — but its `metadata.json` carries an explicit
+  `collection_status` marker (`no_collection_yet` /
+  `last_collection_failed` / `ok`) so the emptiness/failure is never
+  silent. See SIGNALS-R125 and SIGNALS-R126.
 - FC-06: Transaction commit failure → abort success path for that target,
   do not persist results
 - FC-07: Role safety check failure → block collection for that target with

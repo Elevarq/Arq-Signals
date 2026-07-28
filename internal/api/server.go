@@ -666,6 +666,51 @@ func handleExport(deps *Deps) http.HandlerFunc {
 			"until", opts.Until,
 		)
 
+		// FC-05 / SIGNALS-R125 — no-false-clean guard for the DEFAULT
+		// scope (no selector parameters). A 2xx export must never
+		// present a failed or absent collection as a clean, complete
+		// snapshot. When the default scope has no successful data to
+		// package, refuse with HTTP 422 and a reason that distinguishes
+		// "no collection has run yet" from "last collection failed:
+		// <category>". The forensic selector scopes (--all,
+		// --snapshot-id, --since/--until) are NOT refused — they may
+		// legitimately be empty — but their metadata.json still carries
+		// the collection_status marker.
+		isDefaultScope := !opts.All && opts.SnapshotID == "" && opts.Since == "" && opts.Until == ""
+		if isDefaultScope {
+			status, category, err := deps.Exporter.DefaultScopeCollectionStatus(opts.TargetID)
+			if err != nil {
+				slog.Error("export: collection-status check failed", "err", err)
+				safety.AuditLog("export_completed",
+					"actor", actor,
+					"status", "failed",
+					"duration_ms", time.Since(start).Milliseconds(),
+					"size_bytes", 0,
+					"error_category", "builder_error",
+				)
+				deps.Metrics.RecordExport("failed", time.Since(start).Seconds())
+				deps.Metrics.RecordExportFailure("builder_error")
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "export failed"})
+				return
+			}
+			if status != export.CollectionStatusOK {
+				msg := "no collection has run yet — nothing to export"
+				if status == export.CollectionStatusLastFailed {
+					msg = "last collection failed (" + category + ") — no successful data to export"
+				}
+				safety.AuditLog("export_rejected",
+					"actor", actor,
+					"reason", status,
+					"category", category,
+					"duration_ms", time.Since(start).Milliseconds(),
+				)
+				deps.Metrics.RecordExport("rejected", time.Since(start).Seconds())
+				deps.Metrics.RecordExportFailure(status)
+				writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": msg, "reason": status})
+				return
+			}
+		}
+
 		// Buffer the ZIP fully before writing any response headers. If the
 		// export fails midway we want to return a 500 with an error body, not
 		// a 200 with a truncated/invalid ZIP that the client cannot

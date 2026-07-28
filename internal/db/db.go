@@ -331,6 +331,65 @@ func (d *DB) GetTargets() ([]Target, error) {
 	return targets, rows.Err()
 }
 
+// --- Cycle outcomes (SIGNALS-R126) ---
+
+// CycleOutcome is the durable record of a target's most recent
+// collection-cycle outcome. It carries metadata only — target name,
+// status, a bounded failure category, and a timestamp — never a
+// credential, DSN, host, or secret (INV-SIGNALS-07). It exists so an
+// export can distinguish "last collection failed: <category>" from "no
+// collection has run yet" (SIGNALS-R125), closing the FC-05 false-clean
+// gap.
+type CycleOutcome struct {
+	TargetName string
+	Status     string // "success" | "partial" | "failed"
+	Category   string // bounded failure category; empty on success/partial
+	UpdatedAt  string // RFC3339
+}
+
+// RecordCycleOutcome upserts the most-recent cycle outcome for a target
+// (SIGNALS-R126). A failed cycle records status="failed" and a bounded
+// category; a successful/partial cycle records that status and clears
+// the category, so the row always reflects the LAST outcome and a later
+// success clears an earlier failure marker.
+//
+// category MUST be one of the bounded, secret-free metric categories
+// (connect_error, safety_check, version_unsupported, timeout_setup,
+// persistence, internal) or empty; callers never pass raw error text.
+func (d *DB) RecordCycleOutcome(targetName, status, category string) error {
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := d.sql.Exec(`
+		INSERT INTO target_cycle_outcomes (target_name, status, category, updated_at)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(target_name) DO UPDATE SET
+			status=excluded.status, category=excluded.category, updated_at=excluded.updated_at`,
+		targetName, status, category, now,
+	)
+	return err
+}
+
+// GetCycleOutcomes returns the most-recent cycle outcome for every
+// target that has run at least one cycle, ordered by target name for
+// deterministic output (SIGNALS-R126).
+func (d *DB) GetCycleOutcomes() ([]CycleOutcome, error) {
+	rows, err := d.sql.Query(
+		"SELECT target_name, status, category, updated_at FROM target_cycle_outcomes ORDER BY target_name")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var outcomes []CycleOutcome
+	for rows.Next() {
+		var o CycleOutcome
+		if err := rows.Scan(&o.TargetName, &o.Status, &o.Category, &o.UpdatedAt); err != nil {
+			return nil, err
+		}
+		outcomes = append(outcomes, o)
+	}
+	return outcomes, rows.Err()
+}
+
 // --- Snapshots ---
 
 type Snapshot struct {

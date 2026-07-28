@@ -69,8 +69,13 @@ func makeAuditTestHandler(t *testing.T, hsEnabled bool) (http.Handler, func(), *
 // shape (no secrets, contains source_ip, status, duration_ms, size_bytes).
 // Traces: SIGNALS-R078
 func TestExportAuditEventsOnSuccess(t *testing.T) {
-	handler, cleanup, _, _ := makeAuditTestHandler(t, false)
+	handler, cleanup, store, _ := makeAuditTestHandler(t, false)
 	defer cleanup()
+
+	// FC-05/R125: a default export needs successful data, else it is
+	// refused (422). Seed one successful cycle so this exercises the
+	// success audit path.
+	seedOneSuccessfulSnapshot(t, store)
 
 	out := captureSlog(t, func() {
 		req := httptest.NewRequest("GET", "/export", nil)
@@ -225,8 +230,12 @@ func TestExportMetadataContainsComplianceFields(t *testing.T) {
 	for _, hs := range []bool{false, true} {
 		hs := hs
 		t.Run(map[bool]string{false: "gate_off", true: "gate_on"}[hs], func(t *testing.T) {
-			handler, cleanup, _, _ := makeAuditTestHandler(t, hs)
+			handler, cleanup, store, _ := makeAuditTestHandler(t, hs)
 			defer cleanup()
+
+			// FC-05/R125: seed successful data so the default export
+			// is served, not refused (422).
+			seedOneSuccessfulSnapshot(t, store)
 
 			req := httptest.NewRequest("GET", "/export", nil)
 			req.Header.Set("Authorization", "Bearer "+testAPIToken)

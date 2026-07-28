@@ -30,6 +30,82 @@ var ErrSnapshotNotFound = errors.New("snapshot not found")
 // `SnapshotID` together. Translated to HTTP 400 by the API layer.
 var ErrConflictingSelectors = errors.New("conflicting export selectors: --all and --snapshot-id are mutually exclusive")
 
+// Collection-status markers embedded in metadata.json (SIGNALS-R125 /
+// INV-SIGNALS-25). They let a consumer machine-detect emptiness or
+// failure without inferring it from an absent snapshot row.
+const (
+	// CollectionStatusOK — successful collection data is packaged.
+	CollectionStatusOK = "ok"
+	// CollectionStatusNoCollectionYet — no enabled target has ever
+	// completed a collection cycle.
+	CollectionStatusNoCollectionYet = "no_collection_yet"
+	// CollectionStatusLastFailed — an enabled target's most recent
+	// cycle failed entirely and no successful data remains.
+	CollectionStatusLastFailed = "last_collection_failed"
+)
+
+// DefaultScopeCollectionStatus reports the collection_status marker the
+// DEFAULT-scope export (R084) would carry, WITHOUT building the ZIP. The
+// API layer uses it to decide whether to refuse a data-less default
+// export (SIGNALS-R125): "ok" -> serve; "last_collection_failed" /
+// "no_collection_yet" -> HTTP 422 with that reason. It also returns the
+// bounded failure category (for the last_collection_failed message).
+//
+//   - "ok"                      — the default scope has at least one
+//     successful run to package.
+//   - "last_collection_failed"  — no successful default-scope data AND at
+//     least one target's last cycle failed. category names the failure.
+//   - "no_collection_yet"       — no successful data and no failed cycle
+//     recorded (fresh system).
+func (b *Builder) DefaultScopeCollectionStatus(targetID int64) (status, category string, err error) {
+	runs, err := b.store.GetLatestRunsPerCollector(targetID)
+	if err != nil {
+		return "", "", fmt.Errorf("latest runs per collector: %w", err)
+	}
+	for _, r := range runs {
+		if r.Status == "success" || r.Status == "" {
+			return CollectionStatusOK, "", nil
+		}
+	}
+	return b.emptyScopeStatus()
+}
+
+// emptyScopeStatus classifies an export scope that packages no
+// successful data: "last_collection_failed" (with the failure category)
+// when any target's last cycle failed, else "no_collection_yet".
+func (b *Builder) emptyScopeStatus() (status, category string, err error) {
+	outcomes, err := b.store.GetCycleOutcomes()
+	if err != nil {
+		return "", "", fmt.Errorf("cycle outcomes: %w", err)
+	}
+	for _, o := range outcomes {
+		if o.Status == "failed" {
+			return CollectionStatusLastFailed, o.Category, nil
+		}
+	}
+	return CollectionStatusNoCollectionYet, "", nil
+}
+
+// collectionStatus computes the metadata.json marker for the scope
+// actually packaged in THIS ZIP (any scope). "ok" when the packaged
+// run set contains a successful run; otherwise the persisted cycle
+// outcomes decide last_collection_failed vs no_collection_yet. Errors
+// reading cycle outcomes degrade to "no_collection_yet" rather than
+// failing the whole export — the marker is advisory metadata, and a
+// missing marker would itself be a false-clean risk.
+func (b *Builder) collectionStatus(scope *exportScope) string {
+	for _, r := range scope.runSet {
+		if r.Status == "success" || r.Status == "" {
+			return CollectionStatusOK
+		}
+	}
+	status, _, err := b.emptyScopeStatus()
+	if err != nil {
+		return CollectionStatusNoCollectionYet
+	}
+	return status
+}
+
 // Options controls what data is included in the export.
 //
 // Selector precedence (R084/R085):
@@ -330,6 +406,13 @@ func (b *Builder) writeMetadata(zw *zip.Writer, opts Options, scope *exportScope
 		// for the R084 default (runs may carry differing collected_at)
 		// or "snapshot" for selector scopes.
 		"run_scope": scope.runScope,
+		// R125/INV-SIGNALS-25: an unambiguous, machine-detectable marker
+		// so a consumer never has to infer emptiness or failure from an
+		// absent snapshot row. "ok" when successful data is packaged;
+		// "last_collection_failed" / "no_collection_yet" otherwise. The
+		// default-scope endpoint refuses the two non-ok cases (R125);
+		// the forensic --all scope is permissive but carries the marker.
+		"collection_status": b.collectionStatus(scope),
 	}
 	if opts.TargetID > 0 {
 		if name, err := b.store.GetTargetName(opts.TargetID); err == nil && name != "" {
