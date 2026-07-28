@@ -70,6 +70,14 @@ and §"Collector output-contract verification (#314)"
   `relpersistence`, `provolatile`, `prokind`) present in a payload,
   **when** its JSON value is inspected, **then** it is a
   single-character string, never a JSON number.
+- **Given** a target seeded so that `catalog_bloat_v1`/
+  `catalog_index_bloat_v1` emit `relkind`, a function emits
+  `provolatile`/`volatility`, and an identity column emits
+  `attidentity`, **when** the ZIP is read back, **then** each of those
+  values is a string (`relkind`/`volatility` a single character;
+  `attidentity` the empty string for the non-set case), never a JSON
+  number — because the connection boundary decodes OID 18 as text for
+  every collector, not just the columns hand-cast with `::text`.
 
 ## Rules
 
@@ -89,6 +97,21 @@ and §"Collector output-contract verification (#314)"
   `query_runs` row with `status="success"` / `row_count=N`, exactly one
   `query_results` payload shall be joinable by `run_id` and contain
   exactly `N` objects. (INV-STATUS-PAYLOAD-VERIFIED.)
+- **OC-R005 — Char-type normalized at the connection boundary.** The
+  internal PostgreSQL `"char"` type (OID 18) shall be normalized to a
+  text string at the collection boundary for ALL collectors and
+  queries, present and future — via a pooled-connection type
+  registration, not per-column `::text` casts. No OID-18 value shall
+  leave a collector as a JSON number, regardless of whether its SQL
+  hand-casts the column. In particular the columns #313's per-column
+  sweep missed — `relkind` (`catalog_bloat_v1`, `catalog_index_bloat_v1`,
+  `catalog_fdw` `fdw_*_v1`), `provolatile`/`volatility`
+  (`catalog_schema` functions), and `attidentity` (`catalog_schema`
+  identity columns) — shall decode as strings (`""` for the non-set
+  `attidentity`, matching `col::text` semantics under the text
+  protocol's inability to carry an embedded NUL). This closes the class
+  the leaky per-column `::text` approach could not (#319, follow-up to
+  #312/#313; root cause of Elevarq/Analyzer#1871).
 
 ## Invariants
 
@@ -102,6 +125,12 @@ and §"Collector output-contract verification (#314)"
 - **INV-03** — The char-type assertion (`contype == "f"`) is a
   regression lock: it fails on the pre-#313 uncast SQL and passes on
   the `::text`-cast SQL.
+- **INV-04** — The OC-R005 assertions (`relkind`, `provolatile`/
+  `volatility`, `attidentity` as strings) are a regression lock on the
+  central boundary fix: they fail with the OID-18 `AfterConnect`
+  registration removed (columns #313 left uncast decode as numbers) and
+  pass with it in place, independent of the redundant per-column
+  `::text` casts.
 
 ## Failure conditions
 

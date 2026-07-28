@@ -24,6 +24,11 @@
 //     spec-declared columns are present in its payload objects.
 //   - OC-R004 / INV-STATUS-PAYLOAD-VERIFIED: every exported success run
 //     with row_count=N has exactly one joinable payload with N rows.
+//   - OC-R005 / INV-04 (#319): OID 18 is normalized to text at the
+//     connection boundary for ALL collectors — the columns #313's
+//     per-column ::text sweep missed (relkind in the bloat collectors,
+//     provolatile AS volatility in pg_functions_v1, attidentity in
+//     pg_identity_columns_v1) decode as STRINGS, never JSON numbers.
 //
 // Gated by the `integration` build tag and SIGNALS_TEST_PG_DSN (skips
 // locally when unset), matching signals_integration_test.go. In CI it
@@ -35,7 +40,7 @@
 //	  go test -tags integration ./tests/ \
 //	  -run TestIntegration_CollectorOutputContractAgainstRealPG
 //
-// Spec: specifications/collector-output-contract.md (OC-R001..R004);
+// Spec: specifications/collector-output-contract.md (OC-R001..R005);
 //       features/signals/appendix-a-api-contract.md
 //       §"Collector output-contract verification (#314)".
 
@@ -298,6 +303,58 @@ func TestIntegration_CollectorOutputContractAgainstRealPG(t *testing.T) {
 			distinctContype(constraints))
 	}
 
+	// --- OC-R005 / INV-04 (the #319 central-fix lock) --------------
+	// The columns #313's per-column ::text sweep left uncast must ALSO
+	// decode as strings, proving OID 18 is normalized at the connection
+	// boundary for ALL collectors, not just the hand-cast ones:
+	//
+	//   - relkind in the bloat collectors (single-char, e.g. "r"/"i"),
+	//   - provolatile AS volatility in pg_functions_v1 (single-char,
+	//     e.g. "i"/"s"/"v"),
+	//   - attidentity in pg_identity_columns_v1 (a string; "" for the
+	//     non-set case, "a"/"d" when set — never a number).
+	//
+	// These assertions go RED with the OID-18 AfterConnect registration
+	// removed (volatility/attidentity would decode as numbers) and GREEN
+	// with it in place.
+	assertStringCol := func(queryID, col string, allowEmpty bool) {
+		payload, ok := payloadByQueryID[queryID]
+		if !ok {
+			t.Errorf("OC-R005 (#319): expected collector %s to produce a payload against the seeded schema, but none present — cannot verify %q normalizes to a string", queryID, col)
+			return
+		}
+		seen := 0
+		for i, row := range payload {
+			val, present := row[col]
+			if !present || val == nil {
+				continue
+			}
+			seen++
+			s, isStr := val.(string)
+			if !isStr {
+				t.Errorf("OC-R005 (#319 BOUNDARY LOCK): %s row %d column %q is a %T (%v), want a string — the internal \"char\" (OID 18) is NOT normalized at the connection boundary (this column was missed by #313's per-column ::text sweep)",
+					queryID, i, col, val, val)
+				continue
+			}
+			if len(s) > 1 {
+				t.Errorf("OC-R005 (#319): %s row %d column %q = %q, want a single character (or empty)", queryID, i, col, s)
+			}
+			if len(s) == 0 && !allowEmpty {
+				t.Errorf("OC-R005 (#319): %s row %d column %q is empty, want a single character", queryID, i, col)
+			}
+		}
+		if seen == 0 {
+			t.Errorf("OC-R005 (#319): collector %s emitted no %q values — the seeded schema should have exercised it; harness is not covering the columns #313 missed", queryID, col)
+		}
+	}
+	// relkind in the bloat collectors: single-char, non-empty.
+	assertStringCol("bloat_estimate_v1", "relkind", false)
+	assertStringCol("index_bloat_estimate_v1", "relkind", false)
+	// provolatile AS volatility: single-char, non-empty.
+	assertStringCol("pg_functions_v1", "volatility", false)
+	// attidentity: may be "" (non-set) or a single char (a/d).
+	assertStringCol("pg_identity_columns_v1", "attidentity", true)
+
 	// --- OC-R002 / INV-OUTPUT-CONTRACT -----------------------------
 	// Each char-type catalog collector's declared columns are present.
 	for collectorID, cols := range declaredColumnsByCollector {
@@ -358,15 +415,35 @@ func seedRepresentativeSchema(t *testing.T, dsn string) {
 			amount      numeric(12,2)
 		)`,
 		// A non-PK index on a NON-FK column, so at least one ordinary
-		// index exists without accidentally indexing the FK.
+		// index exists without accidentally indexing the FK. This heap
+		// table + its index also feed the bloat collectors so their
+		// relkind columns ('r'/'i') are exercised (OC-R005 / #319).
 		`CREATE INDEX child_note_idx ON signals_oc_test.child (note)`,
+		// An identity column so pg_identity_columns_v1 emits attidentity
+		// (the raw "char" column #313's per-column sweep missed). The
+		// generated column yields attidentity='a'; the plain int/uuid
+		// columns above yield the non-set attidentity='' (empty string
+		// under text-protocol semantics) — both are exercised. #319.
+		`CREATE TABLE signals_oc_test.identity_demo (
+			id    bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+			key   uuid NOT NULL,
+			label text
+		)`,
+		// A SQL function so pg_functions_v1 emits provolatile AS
+		// volatility (also raw "char", missed by #313). #319.
+		`CREATE FUNCTION signals_oc_test.demo_immutable(x integer)
+			RETURNS integer LANGUAGE sql IMMUTABLE
+			AS 'SELECT x + 1'`,
 		`INSERT INTO signals_oc_test.parent (id, label, ratio)
 			VALUES (1, 'a', 1.5), (2, 'b', 2.5)`,
 		`INSERT INTO signals_oc_test.child (id, fk_parent_id, note, amount)
 			VALUES (10, 1, 'x', 9.99), (11, 2, 'y', 1.00)`,
+		`INSERT INTO signals_oc_test.identity_demo (key, label)
+			VALUES (gen_random_uuid(), 'r1'), (gen_random_uuid(), 'r2')`,
 		// ANALYZE so pg_stat_user_tables / n_live_tup are populated.
 		`ANALYZE signals_oc_test.parent`,
 		`ANALYZE signals_oc_test.child`,
+		`ANALYZE signals_oc_test.identity_demo`,
 	}
 	for _, s := range stmts {
 		if _, err := pool.Exec(ctx, s); err != nil {

@@ -103,6 +103,39 @@ payload.
 
 ---
 
+### TC-OC-06: Boundary normalization fixes the columns #313's per-column casts missed
+
+**Rule:** OC-R005 (normal — the #319 central-fix regression lock)
+
+**Scenario:** A target is seeded so the columns the per-column `::text`
+sweep missed are exercised: a table with a non-PK index (so
+`catalog_bloat_v1`/`catalog_index_bloat_v1` emit `relkind`), a function
+(so `catalog_schema` emits `provolatile`/`volatility`), and an identity
+column (so `catalog_schema` emits `attidentity`). The exported payloads
+are inspected.
+
+**Given:**
+- A live target carrying a heap table with a secondary index, a SQL
+  function, and a `GENERATED ... AS IDENTITY` column.
+
+**When:**
+- The full collection runs and a snapshot ZIP is exported via
+  `export.Builder.WriteTo`; `query_results.ndjson` is read back.
+
+**Then:**
+- Every `relkind` value in `catalog_bloat_v1`/`catalog_index_bloat_v1`
+  is a single-character string (e.g. `"r"`, `"i"`), never a number.
+- Every `provolatile`/`volatility` value in the function payload is a
+  single-character string (e.g. `"i"`, `"s"`, `"v"`), never a number.
+- Every `attidentity` value in the identity/column payload is a string
+  (`""` for the non-set case, `"a"`/`"d"` when set), never a number.
+
+**Expected Result:** RED with the OID-18 `AfterConnect` registration
+removed; GREEN with it in place.
+(`TestIntegration_CollectorOutputContractAgainstRealPG`)
+
+---
+
 ### TC-OC-05: Skips locally, runs in the CI matrix
 
 **Rule:** Constraints (env-gating)

@@ -41,6 +41,14 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   the internal `"char"` as a byte integer (`112`/`117`/`116`) instead of
   `p`/`u`/`t` — a residual of the #312 class the new #314 harness caught.
   Now cast `::text` like the other char columns (#314).
+- Central char-type (OID 18) normalization at the connection boundary: an
+  `AfterConnect` pool hook registers the PostgreSQL internal `"char"` type
+  to decode as text on every pooled connection, so all collectors emit char
+  codes as strings regardless of per-column casts. This fixes the residual
+  raw `relkind` (`catalog_bloat`/`catalog_index_bloat`/`catalog_fdw`),
+  `provolatile`/`volatility` (`catalog_schema` functions), and `attidentity`
+  (`catalog_schema` identity columns) that the per-column `::text` sweep
+  missed, and closes the class for all future queries (#319).
 - AWS EC2 deploy paths now forward the whole `signals.env` to the collector,
   not a partial subset (#299).
 
