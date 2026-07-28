@@ -323,6 +323,36 @@ map and the column-dynamic classification, not by weakening any
 assertion. Test helper:
 `tests/signals_collector_output_contract_columns.go`.
 
+#320 completes the type family the internal-`"char"` bug (#312) belonged
+to. `"char"` (OID 18) was one member of a class: pgx maps each
+PostgreSQL type to a Go type, `queryToMaps` stores it, and
+`encoding/json` serializes it — so a type whose exported JSON form the
+Analyzer misreads is a silent contract violation exactly like `char`.
+`char` was fixed centrally (#319); #320 **audits and locks the remaining
+classes** by exported JSON shape, cross-checked against the live
+Analyzer consumer, in a new sibling harness
+`TestIntegration_CollectorTypeContractAgainstRealPG`
+(`tests/signals_collector_type_contract_integration_test.go`) sharing the
+#314/#316/#326 fixture. It was **measured, not guessed** on a live PG
+14–18: `numeric`→JSON number (pgx `pgtype.Numeric`; a `NaN` is the
+string `"NaN"`), `jsonb`→object (`map[string]any`), arrays→array
+(`[]any`), timestamps→RFC3339 string (`time.Time`), `oid`→number
+(`uint32`), `bool`→`true`/`false`. **No real mismatch was found** — the
+`char` class was uniquely broken (pgx's default `QCharCodec` returns an
+integer) whereas every other class has a correct pgx codec, so #320 adds
+**no production SQL change**; it is a regression lock (OC-R009) plus an
+explicit type-class coverage map (OC-R010). Two nuances measurement
+caught that guessing would have missed: (a) the redacted FDW option
+columns (`fdw_options`, `server_options`, `foreign_table_options`) are
+deliberately rendered `text[]`→`map[string]string` **object** by the
+redaction post-processor (a contract the Analyzer ingestion test pins),
+so they are asserted as objects; (b) `pg_policies_v1.permissive` is a PG
+`text` column ("PERMISSIVE"/"RESTRICTIVE"), correctly a string, not a
+bool. `bytea` has no collector column and is recorded not-exercised. The
+assertions are proven real by mutation spot-checks (asserting a `bool` as
+a number, and a column that emits no non-null value, both go RED). Test
+file: `tests/signals_collector_type_contract_integration_test.go`.
+
 | Rule ID | Rule Summary | Test ID(s) | Coverage Status | Evidence Type | Notes |
 |---------|-------------|------------|-----------------|---------------|-------|
 | OC-R001 (collect against live PG) | Full collection runs against a real PostgreSQL target and exports a snapshot ZIP via the production export path | `TestIntegration_CollectorOutputContractAgainstRealPG` | COVERED | INTEGRATION | `//go:build integration` + `SIGNALS_TEST_PG_DSN`; CI matrix PG 14-18. Not in default unit CI. |
@@ -334,3 +364,5 @@ assertion. Test helper:
 | OC-R006 (char sweep covers remaining schema collectors) | The char whitelist includes the aliases `partition_strategy` (`pg_partitions_v1`), `tg_enabled` (`pg_triggers_v1`/`pg_triggers_definitions_v1`), `volatility` (the **output alias** of `provolatile` in `pg_functions_v1`/`pg_functions_definitions_v1`), and `attidentity`; a seeded partitioned table, trigger, and function make each collector emit a single-char string for its aliased char column, never a JSON number | `TestIntegration_CollectorOutputContractAgainstRealPG` | COVERED | INTEGRATION | TC-OC-07; INV-05; regression-locks #319 across the schema collectors #314 missed (#326). |
 | OC-R007 (FDW char capability-gated) | When a superuser DSN provisions `postgres_fdw` + a foreign server + `GRANT USAGE`, a seeded foreign table makes `fdw_foreign_tables_v1` emit `relkind == "f"` (single-char string, never a number); absent the capability the FDW fixture + assertion are skipped with a documented reason and every other assertion still runs | `TestIntegration_CollectorOutputContractAgainstRealPG` | COVERED | INTEGRATION | TC-OC-08; INV-05/INV-06; capability-gated FDW leg of #326. |
 | OC-R008 (no silent coverage gap) | Every registered collector is accounted for: rows-asserted (OC-R002), column-dynamic row-presence, or zero-row allowlisted with a documented reason; a collector emitting no rows that is NOT allowlisted fails the harness naming it; a coverage report enumerates the asserted count + the not-exercised allowlist | `TestIntegration_CollectorOutputContractAgainstRealPG` | COVERED | INTEGRATION | TC-OC-09; INV-07; #316. Local PG-17 run: 55/100 declared-column-asserted + 2 column-dynamic row-presence; 43 not-exercised (allowlisted with reasons). |
+| OC-R009 (type classes land in Analyzer-expected JSON form) | Each audited PostgreSQL type class beyond internal-`"char"` (numeric→number, jsonb→object, array→array, FDW-option→object, timestamp→RFC3339 string, oid→number, bool→`true`/`false`) is asserted against the exported ZIP read back through `encoding/json`, exercised by a seeded non-null value; a NaN numeric is the string `"NaN"` (documented exception); a wrong shape or a vacuous (no non-null) assertion fails the harness | `TestIntegration_CollectorTypeContractAgainstRealPG` | COVERED | INTEGRATION | TC-OC-10; INV-08; the #320 type-fidelity regression lock (general case of the #312 `contype` bug). Cross-checked vs the live Analyzer consumer (`toFloat64`/`relidToInt64`, `map[string]any` jsonb parsing, `[]any` array coercion, RFC3339 time.Parse, `asBool`). Mutation-verified RED on a `bool`-as-number assertion and a no-such-column vacuous assertion. FDW-option-object leg is capability-gated (superuser DSN). |
+| OC-R010 (no silent type-class gap) | Every audited type class is accounted for: ≥1 seeded asserted combination, or a recorded not-exercised reason (`bytea` — no collector column; `regclass-text` — only on capability-gated collectors); a class with zero asserted combinations and no reason fails the harness; a per-class coverage report is logged | `TestIntegration_CollectorTypeContractAgainstRealPG` | COVERED | INTEGRATION | TC-OC-11; INV-08; #320. Local PG-18 run (FDW capability present): numeric/oid/timestamp/bool/array 5 each, jsonb 3, fdw-option-object 3 asserted; bytea + regclass-text not-exercised. PG-15 run (no FDW): fdw-option-object not-exercised (capability gate), rest asserted. |

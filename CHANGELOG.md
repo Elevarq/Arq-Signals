@@ -54,6 +54,31 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   gaps). Test-only — no production SQL changed; a mutation spot-check
   (renaming `pg_indexes_v1.indexname`) confirms the sweep goes RED on a
   dropped/renamed declared column (#316).
+- Type-contract audit locking the PostgreSQL type classes beyond
+  internal-`"char"`: a sibling `integration`-tagged harness
+  (`TestIntegration_CollectorTypeContractAgainstRealPG`) asserts, against
+  the exported ZIP read back through the same `encoding/json` decode a
+  consumer uses, that each audited class lands in the Analyzer-expected
+  JSON form — `numeric`/`decimal` as a number (a `NaN` as the string
+  `"NaN"`), `jsonb` as an object, arrays as arrays, timestamps as RFC3339
+  strings, `oid` as a number, and `bool` as `true`/`false` — the general
+  case of the `"char"` bug (#312) that fixed the FK-index miss
+  (Elevarq/Analyzer#1871). Measured (not guessed) across PG 14–18 and
+  cross-checked against the live Analyzer consumer: no class required a
+  fix — the `"char"` class was uniquely broken (pgx's default codec
+  returns an integer) while every other class already has a correct pgx
+  codec, so this is test-only with no production SQL change. Two nuances
+  measurement caught: the redacted FDW option columns
+  (`fdw_options`/`server_options`/`foreign_table_options`) are
+  deliberately rendered `text[]`→object by the redaction post-processor
+  (a contract the Analyzer ingestion test pins) and are asserted as
+  objects, and `pg_policies_v1.permissive` is correctly a `text` string.
+  An explicit type-class coverage map records which type×collector
+  combinations are exercised versus not (`bytea` has no collector column
+  and is recorded not-exercised), so no class can silently drift; mutation
+  spot-checks (a `bool` asserted as a number, and a vacuous no-null
+  assertion) confirm the lock goes RED. Runs in the existing PG
+  14/15/16/17/18 CI matrix (#320).
 
 ### Fixed
 

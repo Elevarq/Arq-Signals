@@ -1,10 +1,12 @@
 # Collector Output-Contract Verification — Behavioral Specification
 
-Spec version: 1.1
+Spec version: 1.2
 Status: ACTIVE
 Issue: [Elevarq/Signals#314](https://github.com/Elevarq/Signals/issues/314)
 Extended by: [Elevarq/Signals#316](https://github.com/Elevarq/Signals/issues/316)
-(declared-column completeness across ALL collectors)
+(declared-column completeness across ALL collectors) and
+[Elevarq/Signals#320](https://github.com/Elevarq/Signals/issues/320)
+(type-fidelity audit of the remaining PostgreSQL type classes)
 
 ## Purpose
 
@@ -51,6 +53,61 @@ harness, so coverage is honest and a newly-added collector cannot slip
 through unclassified (OC-R008). Column-dynamic collectors (`SELECT *`,
 version-variant, or scalar) are asserted for row presence only, since a
 fixed declared-column list cannot apply.
+
+**#320 completes the family the internal-`"char"` bug (#312) belonged
+to.** `"char"` (OID 18) was one member of a class: pgx maps every
+PostgreSQL type to a Go type, `queryToMaps` stores whatever that mapping
+produced, and `encoding/json` then serializes it — so a type whose JSON
+form the Analyzer misreads is a silent contract violation, exactly like
+`char`. `char` was fixed centrally (#319); #320 **audits and locks the
+remaining classes** by exported JSON shape, cross-checked against the
+actual Analyzer consumer:
+
+- **numeric / decimal** (`bloat_ratio`, `dead_pct`, `pct_used`,
+  `estimate_drift_pct`) — pgx decodes `numeric` to `pgtype.Numeric`,
+  which JSON-marshals as a bare **number**, not an object or string; the
+  Analyzer reads it as a number (`toFloat64`/`numberField`).
+- **jsonb / json** (`by_backend_type`, `by_wait_event_type`,
+  `role_attrs`) — pgx decodes to `map[string]any`, which serializes as a
+  JSON **object**, not a base64 `[]byte` string; the Analyzer reads a
+  `map[string]any`.
+- **arrays** (`enum_labels`, `composite_columns`, `attnums`, `kinds`,
+  `column_set`) — pgx decodes `text[]`/`int[]` to `[]any`, which
+  serializes as a JSON **array**, not a Postgres array literal string
+  (`"{a,b}"`); the Analyzer reads a `[]any`.
+- **timestamps** (`postmaster_start_time`, `started_at`, `stats_reset`,
+  `last_analyze`) — pgx decodes `timestamptz`/`timestamp`/`date` to
+  `time.Time`, which serializes as an **RFC3339 string** the Analyzer
+  parses with `time.Parse`.
+- **oid** (`relid`, `atttypid`, `index_oid`, `datid`, `table_oid`) — pgx
+  decodes `oid` to `uint32`, which serializes as a JSON **number** the
+  Analyzer reads via `relidToInt64`; `regclass`/`regproc`/`regnamespace`
+  cast to text serialize as **strings** (a name), also as expected.
+- **bool** (`relhasindex`, `is_unique`, `security_definer`,
+  `is_superuser`, `relispartition`) — pgx decodes `boolean` to `bool`,
+  which serializes as a JSON **`true`/`false`**, not the `"t"`/`"f"`
+  Postgres text form the Analyzer would silently misread.
+- **bytea** — no collector emits a `bytea` column; the class is recorded
+  as not-exercised (a `[]byte` would serialize as a base64 string, the
+  Analyzer's expected form, but there is nothing to assert).
+
+The measured conclusion (verified against a live PG 14–18): **every one
+of these classes already serializes in the Analyzer-expected form** —
+the `"char"` class was uniquely broken because pgx's default
+`QCharCodec` returns an integer, whereas `numeric`/`jsonb`/`bytea`/
+array/`timestamp`/`oid`/`bool` all have correct pgx codecs. #320
+therefore adds no production SQL change; it is a **regression lock** —
+type-fidelity assertions (OC-R009) that go RED if any of these classes
+ever regresses to the wrong JSON shape, plus an explicit coverage map
+(OC-R010) of which type×collector combinations are exercised versus
+not, so no class can silently drift. One documented nuance the
+assertions account for: a `numeric` whose value is `NaN` serializes as
+the string `"NaN"` (JSON has no NaN), and the redacted FDW option
+columns (`fdw_options`, `server_options`, `foreign_table_options`) are
+deliberately transformed from `text[]` to a `map[string]string`
+**object** by the FDW redaction post-processor — a contract the
+Analyzer's ingestion test pins — so those columns are asserted as
+objects, not arrays.
 
 This spec complements `appendix-a-api-contract.md` §"Snapshot
 data-integrity invariants (#312)" (INV-SNAP-STATUS-PAYLOAD, INV-CHAR-TEXT)
@@ -128,6 +185,23 @@ and §"Collector output-contract verification (#314)"
   environment cannot provide the FDW capability the FDW assertion is
   capability-gated and skipped with a documented reason — the remaining
   schema-collector char assertions still run.
+- **Given** the seeded schema (enum + composite type, extended
+  statistics, RLS-enabled child, FDW server, and populated tables),
+  **when** the ZIP is read back, **then** each audited non-`"char"`
+  PostgreSQL type class lands in its Analyzer-expected JSON form:
+  `numeric` columns (`bloat_ratio`, `dead_pct`, `pct_used`,
+  `estimate_drift_pct`) are JSON **numbers**; `jsonb` columns
+  (`by_backend_type`, `by_wait_event_type`, `role_attrs`) are JSON
+  **objects**; array columns (`enum_labels`, `composite_columns`,
+  `attnums`, `kinds`, `column_set`) are JSON **arrays**; timestamp
+  columns (`postmaster_start_time`, `started_at`, `stats_reset`,
+  `last_analyze`) are **RFC3339 strings** parseable by `time.Parse`;
+  `oid` columns (`relid`, `atttypid`, `index_oid`, `datid`, `table_oid`)
+  are JSON **numbers**; and `bool` columns (`relhasindex`, `is_unique`,
+  `security_definer`, `is_superuser`, `relispartition`) are JSON
+  **`true`/`false`** — never the wrong shape (a `numeric` object, a
+  base64 `jsonb` string, a Postgres array literal, a Unix-epoch number,
+  an `oid` string, or a `"t"`/`"f"` bool).
 
 ## Rules
 
@@ -207,6 +281,46 @@ and §"Collector output-contract verification (#314)"
   fail the harness. The harness shall emit a coverage report recording
   the asserted count and the enumerated not-exercised allowlist, so
   what is and is not exercised is explicit and auditable. (#316.)
+- **OC-R009 — Type classes land in the Analyzer-expected JSON form.**
+  For each audited PostgreSQL type class beyond internal-`"char"`, the
+  harness shall assert — against the exported ZIP read back through the
+  same `encoding/json` path a consumer uses — that a representative
+  collector column of that class serializes in the exact JSON shape the
+  Analyzer consumer reads:
+  - `numeric`/`decimal` → JSON **number** (pgx `pgtype.Numeric`
+    marshals as a bare number; a `NaN` numeric marshals as the string
+    `"NaN"`, accepted as a documented exception);
+  - `jsonb`/`json` → JSON **object** or **array** (pgx decodes to
+    `map[string]any` / `[]any`), never a base64 `[]byte` string;
+  - array (`text[]`, `int[]`) → JSON **array** (pgx `[]any`), never a
+    Postgres array literal string — **except** the FDW option columns
+    (`fdw_options`, `server_options`, `mapping_options`,
+    `foreign_table_options`) which the redaction post-processor
+    deliberately renders as a `map[string]string` **object** (a
+    contract the Analyzer ingestion test pins), asserted as objects;
+  - `timestamptz`/`timestamp`/`date` → **RFC3339 string** parseable by
+    `time.Parse(time.RFC3339, …)` (or `RFC3339Nano`), never a
+    Unix-epoch number;
+  - `oid` → JSON **number** (pgx `uint32`); `regclass`/`regproc`/
+    `regnamespace` cast to text → JSON **string** (a name);
+  - `bool` → JSON **`true`/`false`**, never the `"t"`/`"f"` text form.
+
+  Each asserted type×collector combination shall be exercised by a
+  seeded, non-null value so the assertion is never vacuous. A value in
+  the wrong shape fails the harness. This is a regression lock: it goes
+  RED if a collector's type ever regresses to a form the Analyzer
+  misreads — the general case of the #312 `contype` bug. (#320.)
+- **OC-R010 — No silent type-class gap.** The harness shall carry an
+  explicit, auditable coverage map of the audited type classes: for each
+  class it records which collector×column combinations are asserted
+  (OC-R009) and which are not-exercised, with a reason (the class has no
+  collector column — `bytea` — or the column is emitted only by a
+  version-gated / capability-gated / zero-row-in-harness collector
+  already accounted for by OC-R008). A type class with zero asserted
+  combinations and no not-exercised justification fails the harness, so
+  a future collector that introduces an unhandled type cannot slip
+  through unclassified. The harness logs a per-class coverage report.
+  (#320.)
 
 ## Invariants
 
@@ -247,6 +361,17 @@ and §"Collector output-contract verification (#314)"
   the assertion RED. The zero-row allowlist (OC-R008) is exhaustive
   over the not-exercised collectors — a collector may be absent from
   it only if it emits rows.
+- **INV-08** — The OC-R009 type-fidelity assertions are read back
+  through the same `encoding/json` decode a real consumer uses (the
+  export ZIP's `query_results.ndjson`), so what the harness inspects is
+  the exact JSON type the Analyzer receives — not a Go value inspected
+  before serialization. The assertions hold identically across PG 14–18
+  (the pgx→Go→JSON mapping for these classes is version-invariant;
+  version-gated collectors that are absent on older majors simply
+  contribute no sample and are covered by the OC-R010 not-exercised
+  accounting, never a false failure). The type-class coverage map
+  (OC-R010) is exhaustive: every audited class either has at least one
+  asserted combination or a recorded not-exercised reason.
 
 ## Failure conditions
 
@@ -266,6 +391,16 @@ and §"Collector output-contract verification (#314)"
   gap). A collector whose spec has no `## Output columns` table and no
   column-dynamic classification also fails OC-R002 (underivable
   contract) rather than being silently skipped.
+- **FC-06** — An audited type-class column decoding to the wrong JSON
+  shape fails OC-R009: a `numeric` as an object or (non-`NaN`) string, a
+  `jsonb` as a base64 string, an array as a Postgres literal string, a
+  timestamp as a number or an unparseable string, an `oid` as a string,
+  or a `bool` as a `"t"`/`"f"` string. A seeded type×collector
+  combination that emits no non-null value (a vacuous assertion) also
+  fails OC-R009.
+- **FC-07** — An audited type class with zero asserted combinations and
+  no not-exercised justification fails OC-R010 (unclassified type-class
+  gap).
 
 ## Constraints
 
@@ -285,3 +420,14 @@ and §"Collector output-contract verification (#314)"
   asserted (or their row presence, for the column-dynamic ones); the
   remainder are enumerated in the zero-row allowlist with reasons
   (OC-R008). The original #314 fast-follow is closed.
+- **NFR-03 — Type-class audit locked (DELIVERED #320).** The remaining
+  PostgreSQL type classes beyond internal-`"char"` — `numeric`, `jsonb`,
+  `bytea`, arrays, timestamps, `oid`/`regclass`, and `bool` — are
+  audited by exported JSON shape, cross-checked against the Analyzer
+  consumer, and regression-locked (OC-R009), with an explicit
+  type-class coverage map (OC-R010). Verified across PG 14–18: no
+  class required a production fix (`bytea` has no collector column and
+  is recorded not-exercised); the char class remains the only one that
+  ever needed the central OID-18 codec (#319). The audit found no real
+  mismatch — the type family the #312 `contype` bug belonged to is now
+  fully accounted for.
