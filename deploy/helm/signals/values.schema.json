@@ -14,22 +14,40 @@
     },
     "target": {
       "type": "object",
-      "description": "PostgreSQL target. Set host to enable collection; token/secret auth methods require sslmode verify-full.",
+      "description": "PostgreSQL target. Set host to enable collection; token/secret/mtls auth methods require sslmode verify-full.",
       "properties": {
         "host": { "type": "string", "description": "PostgreSQL hostname (e.g. the RDS endpoint). Required to enable collection." },
         "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
         "dbname": { "type": "string" },
         "user": { "type": "string" },
         "sslmode": { "type": "string", "enum": ["disable", "allow", "prefer", "require", "verify-ca", "verify-full"] },
-        "authMethod": { "type": "string", "enum": ["", "aws_rds_iam", "azure_entra", "gcp_cloudsql_iam", "secret_store"] },
+        "authMethod": { "type": "string", "enum": ["", "aws_rds_iam", "azure_entra", "gcp_cloudsql_iam", "secret_store", "mtls"] },
         "region": { "type": "string" },
         "azureClientId": { "type": "string" },
         "gcpImpersonateServiceAccount": { "type": "string" },
         "secretRef": { "type": "string" },
         "sslRootCertFile": { "type": "string" },
+        "sslCertFile": { "type": "string", "description": "mtls: filesystem PATH to the PEM client certificate (never its contents). Mount the cert via extraVolumes/extraVolumeMounts and point this at the mount path. Required for mtls." },
+        "sslKeyFile": { "type": "string", "description": "mtls: filesystem PATH to the PEM client private key (never its contents). Mount the key via extraVolumes/extraVolumeMounts and point this at the mount path. Required for mtls." },
+        "sslKeyPassphraseFile": { "type": "string", "description": "mtls: optional filesystem PATH to a file holding the passphrase for an encrypted client key (never the passphrase itself). Mount via extraVolumes/extraVolumeMounts." },
         "passwordSecretName": { "type": "string" },
         "passwordSecretKey": { "type": "string" }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "authMethod": { "const": "mtls" } },
+            "required": ["authMethod"]
+          },
+          "then": {
+            "required": ["sslCertFile", "sslKeyFile"],
+            "properties": {
+              "sslCertFile": { "type": "string", "minLength": 1 },
+              "sslKeyFile": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      ]
     },
     "collector": {
       "type": "object",

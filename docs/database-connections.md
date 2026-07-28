@@ -360,6 +360,14 @@ The private key is read at connect time and **never logged or exported**;
 a rotated cert/key is picked up on the next reconnect. `verify-full` is
 required — a client certificate is only presented to a verified server.
 
+**On Kubernetes (Helm):** the chart exposes `target.authMethod: mtls`
+with `target.sslCertFile` / `target.sslKeyFile` /
+`target.sslKeyPassphraseFile` — these are **paths only**, never the PEM
+contents. Mount the client cert + key from a Kubernetes Secret with
+`extraVolumes` / `extraVolumeMounts` and point the path values at the
+mount. The full snippet is in
+[`deploy/helm/signals/README.md`](../deploy/helm/signals/README.md#mtls--client-certificate-auth-self-managed--on-prem).
+
 ---
 
 ## TLS, at a glance
