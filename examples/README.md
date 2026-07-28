@@ -6,9 +6,29 @@ Deployment templates and reference configurations.
 
 | Pattern | File | Use when |
 |---|---|---|
+| One-command snapshot | [`local-snapshot.sh`](local-snapshot.sh) | You just want a real, inspectable snapshot ZIP from the current code — repeatably. Brings the dev stack up, runs a collection, **waits for it to finish**, exports, and verifies the constraint output. |
 | Dev quickstart | [`docker-compose.yml`](docker-compose.yml) | Trying Elevarq Signals on a self-contained local PostgreSQL. Bootstraps PG 16 + monitoring role + sample data. |
 | Production | [`docker-compose.prod.yml`](docker-compose.prod.yml) | Connecting to your real PostgreSQL with a Docker secret for the password. No embedded DB. |
 | Kubernetes | [`helm/`](helm/) | Helm-based deployment on a K8s cluster. |
+
+---
+
+## One-command snapshot (repeatable)
+
+The fastest way to get a real snapshot from the current code and eyeball
+it — idempotent, so run it as many times as you like:
+
+    examples/local-snapshot.sh                    # -> ./signals-snapshot.zip
+    OUT=~/Downloads/snap.zip examples/local-snapshot.sh
+    examples/local-snapshot.sh --down             # tear the stack down
+
+It builds + starts the stack, seeds a representative schema (via
+[`init.sql`](init.sql): PK/FK/UNIQUE/CHECK constraints + an intentionally
+unindexed FK), forces a collection, **waits for it to complete** (polling,
+not a blind sleep — an early export would be empty), exports the ZIP, and
+prints the `pg_constraints_v1` output so you can confirm `contype` is a
+single-char string (`"f"`/`"p"`/`"u"`/`"c"`), not a byte integer. Then
+inspect it with [`snapshot-inspection/`](snapshot-inspection/README.md).
 
 ---
 
