@@ -24,6 +24,18 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   a new CI job matrixed across PG 14/15/16/17/18 (#314). Closes the STDD
   gap where a specification's declared output was never asserted in the
   exported ZIP end-to-end.
+- Output-contract harness coverage for the remaining internal-`"char"`
+  schema collectors #314 missed: the sweep now seeds a partitioned table,
+  a trigger, and a SQL function and asserts
+  `pg_partitions_v1.partition_strategy`,
+  `pg_triggers_v1`/`pg_triggers_definitions_v1.tg_enabled`, and
+  `pg_functions_v1`/`pg_functions_definitions_v1.volatility` decode as
+  single-char strings (never JSON numbers), regression-locking #319's
+  central OID-18 normalization across the whole char family. When a
+  superuser DSN provisions the FDW capability the harness also seeds a
+  foreign table and asserts `fdw_foreign_tables_v1.relkind == "f"`;
+  without the capability that leg is a documented skip. Test-only — the
+  production normalization already landed in #319 (#326).
 
 ### Fixed
 

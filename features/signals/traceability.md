@@ -280,6 +280,17 @@ assertion is RED on pre-#313 uncast SQL and GREEN after. Test:
 PG-version matrix 14/15/16/17/18. Acceptance:
 `specifications/collector-output-contract.acceptance.md`.
 
+#326 extends the harness to the remaining internal-`"char"` schema
+collectors #314 left unexercised: it seeds a partitioned table, a
+trigger, and a SQL function and asserts `pg_partitions_v1.partition_strategy`,
+`pg_triggers_v1`/`pg_triggers_definitions_v1.tg_enabled`, and
+`pg_functions_v1`/`pg_functions_definitions_v1.volatility` decode as
+single-char strings (OC-R006). When a superuser DSN
+(`SIGNALS_TEST_PG_SUPERUSER_DSN`) provisions the FDW capability it also
+seeds a foreign table and asserts `fdw_foreign_tables_v1.relkind == "f"`;
+without the capability that leg is a documented skip (OC-R007). This is
+test-only — the production normalization already landed in #319/#321.
+
 | Rule ID | Rule Summary | Test ID(s) | Coverage Status | Evidence Type | Notes |
 |---------|-------------|------------|-----------------|---------------|-------|
 | OC-R001 (collect against live PG) | Full collection runs against a real PostgreSQL target and exports a snapshot ZIP via the production export path | `TestIntegration_CollectorOutputContractAgainstRealPG` | COVERED | INTEGRATION | `//go:build integration` + `SIGNALS_TEST_PG_DSN`; CI matrix PG 14-18. Not in default unit CI. |
@@ -288,3 +299,5 @@ PG-version matrix 14/15/16/17/18. Acceptance:
 | OC-R004 (status↔payload joinable) | Every exported `status=success`/`row_count=N` run has exactly one joinable payload with N objects | `TestIntegration_CollectorOutputContractAgainstRealPG` | COVERED | INTEGRATION | TC-OC-04; INV-STATUS-PAYLOAD-VERIFIED; end-to-end proof of INV-SNAP-STATUS-PAYLOAD (#312). |
 | INV-SNAP-STATUS-PAYLOAD (retention producer, #327) | Retention cleanup deletes a run's payload + its run row atomically; a failure after the payload delete leaves BOTH tables intact, so no `success` run is ever stripped of its joinable payload | `internal/db/retention_atomic_test.go` (`TestDeleteQueryRunsOlderThan_AtomicOnSecondStepFailure`, `TestDeleteQueryRunsOlderThanByClass_AtomicOnSecondStepFailure`, `TestDeleteQueryRuns*_InvariantHoldsAfterCleanup`) | COVERED | BEHAVIORAL | FC-23; failure-injection proving the transaction rolls back both deletes on a second-step failure; post-cleanup asserts every remaining `success` run has exactly one joinable payload with `row_count` rows. Covers both the legacy flat helper and the per-class production helper. |
 | OC-R005 (char-type normalized at connection boundary) | OID 18 decodes as text for ALL collectors via a pooled-connection type registration; the columns #313 missed — `relkind` (`catalog_bloat_v1`/`catalog_index_bloat_v1`/`fdw_*_v1`), `provolatile`/`volatility` (functions), `attidentity` (identity, `""` when non-set) — decode as strings, never JSON numbers | `TestIntegration_CollectorOutputContractAgainstRealPG` | COVERED | INTEGRATION | TC-OC-06; INV-04; the #319 central-fix regression lock (root cause of Elevarq/Analyzer#1871). |
+| OC-R006 (char sweep covers remaining schema collectors) | The char whitelist includes the aliases `partition_strategy` (`pg_partitions_v1`), `tg_enabled` (`pg_triggers_v1`/`pg_triggers_definitions_v1`), `volatility` (the **output alias** of `provolatile` in `pg_functions_v1`/`pg_functions_definitions_v1`), and `attidentity`; a seeded partitioned table, trigger, and function make each collector emit a single-char string for its aliased char column, never a JSON number | `TestIntegration_CollectorOutputContractAgainstRealPG` | COVERED | INTEGRATION | TC-OC-07; INV-05; regression-locks #319 across the schema collectors #314 missed (#326). |
+| OC-R007 (FDW char capability-gated) | When a superuser DSN provisions `postgres_fdw` + a foreign server + `GRANT USAGE`, a seeded foreign table makes `fdw_foreign_tables_v1` emit `relkind == "f"` (single-char string, never a number); absent the capability the FDW fixture + assertion are skipped with a documented reason and every other assertion still runs | `TestIntegration_CollectorOutputContractAgainstRealPG` | COVERED | INTEGRATION | TC-OC-08; INV-05/INV-06; capability-gated FDW leg of #326. |
