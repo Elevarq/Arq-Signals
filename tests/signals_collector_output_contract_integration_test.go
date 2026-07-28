@@ -65,6 +65,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"testing"
 	"time"
 
@@ -74,6 +75,7 @@ import (
 	"github.com/elevarq/signals/internal/collector"
 	"github.com/elevarq/signals/internal/config"
 	"github.com/elevarq/signals/internal/export"
+	"github.com/elevarq/signals/internal/pgqueries"
 )
 
 // internalCharColumns are the PostgreSQL internal-"char" columns the
@@ -465,8 +467,10 @@ func TestIntegration_CollectorOutputContractAgainstRealPG(t *testing.T) {
 		t.Log("OC-R007: FDW capability absent — fdw_foreign_tables_v1.relkind assertion skipped (documented capability gate)")
 	}
 
-	// --- OC-R002 / INV-OUTPUT-CONTRACT -----------------------------
-	// Each char-type catalog collector's declared columns are present.
+	// --- OC-R002 / INV-OUTPUT-CONTRACT (targeted char collectors) --
+	// The #314/#326 char-type catalog collectors keep an explicit,
+	// hand-audited declared-column list as a stronger, drift-proof
+	// belt-and-braces check alongside the spec-derived sweep below.
 	for collectorID, cols := range declaredColumnsByCollector {
 		payload, ok := payloadByQueryID[collectorID]
 		if !ok {
@@ -484,6 +488,72 @@ func TestIntegration_CollectorOutputContractAgainstRealPG(t *testing.T) {
 					collectorID, col, keysOf(row))
 			}
 		}
+	}
+
+	// --- OC-R002 / INV-OUTPUT-CONTRACT (spec-derived, ALL collectors) ---
+	// #316: extend the per-collector declared-column assertion from the
+	// handful of char collectors above to EVERY registered collector.
+	// For each collector that emitted rows against the seeded live PG,
+	// derive its declared output columns from its spec (parseOutputColumns)
+	// and assert each is present in its exported payload objects — closing
+	// the gap where a non-schema collector could silently drop or rename a
+	// declared column. Collectors that legitimately emit zero rows in this
+	// environment are recorded in zeroRowAllowlist (with a reason) rather
+	// than silently skipped, so coverage is honest and a newly-added
+	// collector cannot slip through unclassified.
+	asserted := 0        // collectors whose declared columns were verified against emitted rows
+	dynamicAsserted := 0 // column-dynamic collectors verified for row-presence only
+	var notExercised []string
+	var missing []string // unclassified zero-row/absent collectors (fail)
+
+	for _, q := range pgqueries.All() {
+		id := q.ID
+		payload, ran := payloadByQueryID[id]
+		if ran && len(payload) > 0 {
+			cols, dynamic := declaredColumnsForCollector(t, id)
+			if dynamic {
+				// Column-dynamic (SELECT *) — assert row presence only.
+				dynamicAsserted++
+				t.Logf("OC-R002: collector %s asserted (column-dynamic, %d rows, row-presence only)", id, len(payload))
+				continue
+			}
+			for _, row := range payload {
+				for _, col := range cols {
+					if _, present := row[col]; !present {
+						t.Errorf("OC-R002 (INV-OUTPUT-CONTRACT): collector %s payload is missing spec-declared column %q; keys present=%v",
+							id, col, keysOf(row))
+					}
+				}
+			}
+			asserted++
+			continue
+		}
+
+		// No rows emitted (skipped, not eligible, or 0-row success). It
+		// MUST be classified in the zero-row allowlist with a reason —
+		// no silent coverage gap.
+		reason, ok := zeroRowAllowlist[id]
+		if !ok {
+			missing = append(missing, id)
+			continue
+		}
+		notExercised = append(notExercised, fmt.Sprintf("%s (%s)", id, reason))
+	}
+
+	sort.Strings(notExercised)
+	sort.Strings(missing)
+
+	if len(missing) > 0 {
+		t.Errorf("OC-R002: %d collector(s) emitted no rows and are NOT in zeroRowAllowlist — classify each with a fixture (seed it to emit rows) or an explicit reason, no silent gaps: %v",
+			len(missing), missing)
+	}
+
+	// Coverage report — the honest accounting the issue asks for.
+	total := len(pgqueries.All())
+	t.Logf("OC-R002 coverage: %d/%d collectors have declared-column assertions against emitted rows (+%d column-dynamic row-presence); %d not exercised (allowlisted):",
+		asserted, total, dynamicAsserted, len(notExercised))
+	for _, e := range notExercised {
+		t.Logf("  not-exercised: %s", e)
 	}
 }
 
@@ -572,6 +642,45 @@ func seedRepresentativeSchema(t *testing.T, dsn string) (fdwSeeded bool) {
 		`CREATE TRIGGER child_bi
 			BEFORE INSERT ON signals_oc_test.child
 			FOR EACH ROW EXECUTE FUNCTION signals_oc_test.tg_noop()`,
+		// #316 — representative fixtures that lift the remaining
+		// cheaply-seedable non-schema/schema collectors into the
+		// declared-column assertion set (OC-R002). Each object lands in
+		// the dedicated schema so collection stays scoped and the seed
+		// stays read-only against the target's own objects.
+		//
+		// A view + materialized view so pg_views_v1 / pg_views_definitions_v1
+		// and pg_matviews_v1 / pg_matviews_definitions_v1 emit rows.
+		`CREATE VIEW signals_oc_test.parent_view AS
+			SELECT id, label FROM signals_oc_test.parent`,
+		`CREATE MATERIALIZED VIEW signals_oc_test.parent_mv AS
+			SELECT id, label FROM signals_oc_test.parent WITH DATA`,
+		`CREATE INDEX parent_mv_idx ON signals_oc_test.parent_mv (id)`,
+		// An enum type and a composite type so pg_types_v1 emits rows
+		// (it filters to typtype IN ('e','c','d')).
+		`CREATE TYPE signals_oc_test.color AS ENUM ('red', 'green', 'blue')`,
+		`CREATE TYPE signals_oc_test.point2d AS (x double precision, y double precision)`,
+		// An RLS policy on the child table so pg_policies_v1 emits a row.
+		`ALTER TABLE signals_oc_test.child ENABLE ROW LEVEL SECURITY`,
+		`CREATE POLICY child_all ON signals_oc_test.child
+			USING (fk_parent_id > 0)`,
+		// Multi-column extended statistics so pg_statistic_ext_v1 emits a
+		// row; ANALYZE computes the dependency data.
+		`CREATE STATISTICS signals_oc_test.child_stats (dependencies)
+			ON fk_parent_id, note FROM signals_oc_test.child`,
+		// A function carrying a SET config so pg_proc_config_v1 emits a
+		// row (it filters to proconfig IS NOT NULL).
+		`CREATE FUNCTION signals_oc_test.demo_config()
+			RETURNS integer LANGUAGE sql
+			SET search_path = 'pg_catalog'
+			AS 'SELECT 1'`,
+		// A user rule so pg_rules_v1 emits a row (the implicit view
+		// _RETURN rule is excluded by the collector).
+		`CREATE TABLE signals_oc_test.rule_log (
+			id bigint,
+			note text
+		)`,
+		`CREATE RULE rule_log_noop AS ON UPDATE TO signals_oc_test.rule_log
+			DO INSTEAD NOTHING`,
 		`INSERT INTO signals_oc_test.parent (id, label, ratio)
 			VALUES (1, 'a', 1.5), (2, 'b', 2.5)`,
 		`INSERT INTO signals_oc_test.child (id, fk_parent_id, note, amount)

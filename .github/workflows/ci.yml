@@ -52,12 +52,16 @@ jobs:
 
   # #314: collector output-contract verification against a live
   # PostgreSQL, matrixed across every supported major so version-gated
-  # column/type differences surface. The integration test seeds a
-  # parent+child table with an UNINDEXED foreign key, runs the full
+  # column/type differences surface. The integration test seeds
+  # representative schema (a parent+child table with an UNINDEXED foreign
+  # key, plus a view, matview, partitioned table, trigger, function,
+  # types, RLS policy, extended statistics and a rule), runs the full
   # collection, exports a snapshot ZIP via the production export path,
-  # and asserts the per-collector output contract — most importantly the
-  # internal-"char" columns (contype/relkind/relpersistence/provolatile/
-  # prokind) serialize as single-char STRINGS, locking the #312 class
+  # and asserts the per-collector output contract for EVERY registered
+  # collector that emits rows (#316) — the spec-declared columns are
+  # present, and most importantly the internal-"char" columns
+  # (contype/relkind/relpersistence/provolatile/prokind) serialize as
+  # single-char STRINGS, locking the #312 class
   # (an uncast contype serialized as 102 instead of "f", so the Analyzer
   # skipped every FK — Elevarq/Analyzer#1871). The test is `integration`
   # build-tag + SIGNALS_TEST_PG_DSN gated, so it never runs in the unit

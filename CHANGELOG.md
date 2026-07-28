@@ -36,6 +36,24 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   foreign table and asserts `fdw_foreign_tables_v1.relkind == "f"`;
   without the capability that leg is a documented skip. Test-only — the
   production normalization already landed in #319 (#326).
+- Output-contract harness now asserts spec-declared output columns for
+  EVERY registered collector, not only the schema ones — closing the
+  #314 fast-follow (#316). Declared columns are derived from each
+  collector's spec `## Output columns` table at test time (never
+  hand-copied, so they cannot drift from the spec); the seed gained a
+  view, materialized view, enum + composite type, RLS policy, extended
+  statistics, a SET-config function, and a user rule so the previously
+  zero-row schema collectors now emit rows and are asserted. Collectors
+  that legitimately emit no rows in the test environment (needing
+  concurrent sessions, in-flight operations, replication, an
+  uninstalled extension, a privilege the `pg_monitor` role lacks, or a
+  rare catalog object) are enumerated in an explicit zero-row allowlist
+  with per-collector reasons; a collector emitting no rows that is not
+  allowlisted fails the harness, and a coverage report records the
+  asserted count and the not-exercised allowlist (no silent coverage
+  gaps). Test-only — no production SQL changed; a mutation spot-check
+  (renaming `pg_indexes_v1.indexname`) confirms the sweep goes RED on a
+  dropped/renamed declared column (#316).
 
 ### Fixed
 
