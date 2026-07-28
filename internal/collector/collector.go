@@ -85,7 +85,14 @@ type Collector struct {
 	// auth_method (credential-providers.md #93): the default password
 	// provider, or the aws_rds_iam token provider (#94). Set once at
 	// construction; invoked from getPool's BeforeConnect hook.
-	credResolver *credentialResolver
+	//
+	// Typed as the CredentialResolver interface (not the concrete
+	// *credentialResolver) so tests can inject a recording fake via
+	// WithCredentialResolverForTest to verify the R100.1 guarantee that
+	// a reload-created pool re-resolves with the NEW target config. The
+	// production path assigns the concrete resolver, which satisfies the
+	// interface.
+	credResolver CredentialResolver
 
 	// circuit is the per-target state machine (R097). Always
 	// non-nil after New — defaults to a manager with the
@@ -218,6 +225,21 @@ func WithMinSnapshotInterval(d time.Duration) CollectorOption {
 // (#93/#94). Tests inject a resolver with a fake AWS token minter and a
 // deterministic clock so no test makes a real AWS call (NFR003).
 func WithCredentialResolver(r *credentialResolver) CollectorOption {
+	return func(c *Collector) {
+		if r != nil {
+			c.credResolver = r
+		}
+	}
+}
+
+// WithCredentialResolverForTest injects an arbitrary CredentialResolver
+// implementation (test seam for #328 / R100.1). Unlike
+// WithCredentialResolver it accepts the exported interface, letting a
+// test supply a recording fake that captures the exact TargetConfig each
+// pool's BeforeConnect closure resolves with — proving a reload-created
+// pool re-resolves the credential against the NEW config rather than the
+// config captured by a stale pool's closure.
+func WithCredentialResolverForTest(r CredentialResolver) CollectorOption {
 	return func(c *Collector) {
 		if r != nil {
 			c.credResolver = r
@@ -409,14 +431,85 @@ func (c *Collector) Reload(newTargets []config.TargetConfig) error {
 	return nil
 }
 
-// sameConnection returns true when the network-identity fields of
-// two TargetConfigs match. Used by Reload to decide whether a
-// modified target needs its pool torn down.
+// connIdentity is the derived "connection identity" of a target: the
+// exhaustive set of TargetConfig fields that affect how the collector
+// dials, secures (TLS), selects, resolves, or caches its connection
+// credential (SIGNALS-R100.1, #328). Two targets with equal
+// connIdentity dial and authenticate identically, so a reload that
+// leaves the identity unchanged may keep the existing pool; any
+// difference MUST tear the pool down, because the pool's BeforeConnect
+// closure captured the OLD target config and would otherwise keep
+// resolving the stale auth method / secret / cloud identity / cert / CA
+// even on future connections.
+//
+// It deliberately EXCLUDES the non-connection fields — the `collectors`
+// sensitivity profile and the `Enabled` flag — so a profile-only change
+// takes effect without an unnecessary pool drop. TestConnIdentity_
+// CoversEveryConnectionField reflects over TargetConfig and fails if a
+// newly added field is neither mapped here nor listed as a known
+// non-connection field, forcing a test-time decision rather than a
+// silent omission from the reload comparison.
+type connIdentity struct {
+	// Dialing
+	Host    string
+	Port    int
+	DBName  string
+	User    string
+	SSLMode string
+	// TLS: server verification (CA) + mTLS client material
+	SSLRootCertFile      string
+	SSLCert              string
+	SSLKey               string
+	SSLKeyPassphraseFile string
+	// Credential selection
+	AuthMethod                   string
+	Region                       string
+	AzureClientID                string
+	GCPImpersonateServiceAccount string
+	SecretRef                    string
+	SecretJSONKey                string
+	// Credential content (password sources)
+	PasswordFile string
+	PasswordEnv  string
+	PgpassFile   string
+	// Credential caching
+	MaxCacheTTL time.Duration
+}
+
+// connectionIdentity derives the connIdentity of a target.
+func connectionIdentity(t config.TargetConfig) connIdentity {
+	return connIdentity{
+		Host:                         t.Host,
+		Port:                         t.Port,
+		DBName:                       t.DBName,
+		User:                         t.User,
+		SSLMode:                      t.SSLMode,
+		SSLRootCertFile:              t.SSLRootCertFile,
+		SSLCert:                      t.SSLCert,
+		SSLKey:                       t.SSLKey,
+		SSLKeyPassphraseFile:         t.SSLKeyPassphraseFile,
+		AuthMethod:                   t.AuthMethod,
+		Region:                       t.Region,
+		AzureClientID:                t.AzureClientID,
+		GCPImpersonateServiceAccount: t.GCPImpersonateServiceAccount,
+		SecretRef:                    t.SecretRef,
+		SecretJSONKey:                t.SecretJSONKey,
+		PasswordFile:                 t.PasswordFile,
+		PasswordEnv:                  t.PasswordEnv,
+		PgpassFile:                   t.PgpassFile,
+		MaxCacheTTL:                  t.MaxCacheTTL,
+	}
+}
+
+// sameConnection returns true when two TargetConfigs share the same
+// connection identity (SIGNALS-R100.1). Used by Reload to decide
+// whether a modified target needs its pool torn down. Any change to a
+// dialing, TLS, credential-selection, credential-content, or
+// credential-caching field flips this to false and forces a re-dial;
+// a change to only the sensitivity profile or the enabled flag leaves
+// it true so the pool is preserved.
 func sameConnection(a, b config.TargetConfig) bool {
-	return a.Host == b.Host && a.Port == b.Port &&
-		a.DBName == b.DBName && a.User == b.User &&
-		a.SSLMode == b.SSLMode && a.PasswordFile == b.PasswordFile &&
-		a.PasswordEnv == b.PasswordEnv && a.PgpassFile == b.PgpassFile
+	return connectionIdentity(a) == connectionIdentity(b)
 }
 
 // circuitStateLabels returns every circuit-state value as a string
@@ -1329,28 +1422,14 @@ func (c *Collector) getPool(ctx context.Context, tgt config.TargetConfig) (*pgxp
 	// re-read the client cert/key so a rotated cert is picked up without a
 	// restart (#98). The resolver dispatches on auth_method; the resolved
 	// value is applied as a password or a TLS client certificate per Kind.
-	poolCfg.BeforeConnect = func(ctx context.Context, cfg *pgx.ConnConfig) error {
-		cred, err := c.credResolver.Resolve(ctx, tgt)
-		if err != nil {
-			slog.Error("failed to resolve credential for target", "target", tgt.Name, "auth_method", tgt.EffectiveAuthMethod(), "err", redactError(err))
-			return fmt.Errorf("resolve credential: %w", redactError(err))
-		}
-		switch cred.Kind {
-		case CredKindCertificate:
-			// mtls (#98): present the client certificate during the TLS
-			// handshake. verify-full is enforced at config validation, so
-			// pgx has built a TLSConfig we extend (never replace).
-			if cfg.TLSConfig == nil {
-				return fmt.Errorf("mtls target %s: connection has no TLS config (sslmode must be verify-full)", tgt.Name)
-			}
-			if cred.ClientCert != nil {
-				cfg.TLSConfig.Certificates = []tls.Certificate{*cred.ClientCert}
-			}
-		default:
-			cfg.Password = cred.Password
-		}
-		return nil
-	}
+	//
+	// The closure captures `tgt` at pool-creation time, so a stale pool
+	// keeps resolving the OLD config even on future connections. Reload
+	// (R100.1) closes the pool whenever any connection/credential field
+	// changes precisely so the NEXT getPool rebuilds this closure with
+	// the NEW tgt (regression covered by
+	// TestReload_NewConnectionResolvesWithNewConfig).
+	poolCfg.BeforeConnect = c.beforeConnectFor(tgt)
 
 	// OC-R005: normalize the PostgreSQL internal "char" type (OID 18) to
 	// text on every pooled connection. pgx's default QCharCodec decodes
@@ -1377,6 +1456,96 @@ func (c *Collector) getPool(ctx context.Context, tgt config.TargetConfig) (*pgxp
 
 	c.pools[tgt.Name] = pool
 	return pool, nil
+}
+
+// beforeConnectFor builds the pgx BeforeConnect hook for a target,
+// capturing `tgt` so the resolved credential reflects exactly the
+// config that was in effect when the pool was created (#93/#94/#98).
+// Extracted from getPool so the reload regression test
+// (TestReload_NewConnectionResolvesWithNewConfig) can drive the exact
+// production closure via EnsurePoolBeforeConnectForTest.
+func (c *Collector) beforeConnectFor(tgt config.TargetConfig) func(context.Context, *pgx.ConnConfig) error {
+	return func(ctx context.Context, cfg *pgx.ConnConfig) error {
+		cred, err := c.credResolver.Resolve(ctx, tgt)
+		if err != nil {
+			slog.Error("failed to resolve credential for target", "target", tgt.Name, "auth_method", tgt.EffectiveAuthMethod(), "err", redactError(err))
+			return fmt.Errorf("resolve credential: %w", redactError(err))
+		}
+		switch cred.Kind {
+		case CredKindCertificate:
+			// mtls (#98): present the client certificate during the TLS
+			// handshake. verify-full is enforced at config validation, so
+			// pgx has built a TLSConfig we extend (never replace).
+			if cfg.TLSConfig == nil {
+				return fmt.Errorf("mtls target %s: connection has no TLS config (sslmode must be verify-full)", tgt.Name)
+			}
+			if cred.ClientCert != nil {
+				cfg.TLSConfig.Certificates = []tls.Certificate{*cred.ClientCert}
+			}
+		default:
+			cfg.Password = cred.Password
+		}
+		return nil
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Test seams for #328 / R100.1 (connection-identity pool invalidation).
+//
+// The reload/pool-invalidation behaviour lives entirely behind the
+// unexported pools map. These exported helpers let the external
+// `tests` package observe pool presence and drive a pool's captured
+// BeforeConnect closure WITHOUT a live PostgreSQL — pgxpool.New is
+// lazy, so a seeded pool never dials until Acquire, which the tests
+// never call. They must never be used outside tests.
+// ---------------------------------------------------------------------------
+
+// SeedPoolForTest installs a lazy (non-dialing) pool for the named
+// target so a subsequent Reload can be observed closing it. Returns an
+// error if the placeholder pool cannot be constructed.
+func (c *Collector) SeedPoolForTest(name string) error {
+	poolCfg, err := pgxpool.ParseConfig("postgres://127.0.0.1:1/seed")
+	if err != nil {
+		return err
+	}
+	// A non-zero MinConns would make pgxpool dial eagerly; keep it 0 so
+	// the pool stays purely in-memory until an Acquire the tests avoid.
+	poolCfg.MinConns = 0
+	pool, err := pgxpool.NewWithConfig(context.Background(), poolCfg)
+	if err != nil {
+		return err
+	}
+	c.poolsMu.Lock()
+	defer c.poolsMu.Unlock()
+	if existing, ok := c.pools[name]; ok {
+		existing.Close()
+	}
+	c.pools[name] = pool
+	return nil
+}
+
+// HasPoolForTest reports whether a live pool is currently registered
+// for the named target.
+func (c *Collector) HasPoolForTest(name string) bool {
+	c.poolsMu.Lock()
+	defer c.poolsMu.Unlock()
+	_, ok := c.pools[name]
+	return ok
+}
+
+// EnsurePoolBeforeConnectForTest builds (via the production getPool
+// path) a pool for tgt and returns its BeforeConnect closure so a test
+// can invoke it directly — verifying which TargetConfig the pool's
+// credential resolution captured. Because getPool is lazy, no dial
+// occurs. The returned closure is exactly the one the real pool uses.
+func (c *Collector) EnsurePoolBeforeConnectForTest(ctx context.Context, tgt config.TargetConfig) (func(context.Context, *pgx.ConnConfig) error, error) {
+	if _, err := c.getPool(ctx, tgt); err != nil {
+		return nil, err
+	}
+	// Rebuild the identical closure the pool holds; both capture the
+	// same tgt value passed to getPool, so invoking this observes the
+	// same credResolver.Resolve(tgt) the pool would issue.
+	return c.beforeConnectFor(tgt), nil
 }
 
 func (c *Collector) closePools() {

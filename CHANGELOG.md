@@ -37,6 +37,23 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   legacy flat helper (`DeleteQueryRunsOlderThan`) and the per-class
   production helper (`DeleteQueryRunsOlderThanByClass`) get the same
   all-or-nothing guarantee (INV-SNAP-STATUS-PAYLOAD / FC-23).
+- Config reload now closes a target's connection pool whenever **any**
+  connection-affecting field changes, not only the
+  host/port/database/user/sslmode/password-source subset. Previously a
+  reload that changed only a TLS field (`sslrootcert_file`, `sslcert`,
+  `sslkey`, `sslkey_passphrase_file`), a credential selector
+  (`auth_method`, `region`, `azure_client_id`,
+  `gcp_impersonate_service_account`, `secret_ref`, `secret_json_key`),
+  or the credential cache TTL (`max_cache_ttl`) left the stale pool in
+  place. Because the pool's `BeforeConnect` closure captured the old
+  target config, even future connections kept resolving the old auth
+  method / secret / cloud identity / cert / CA, so reload reported
+  success while the requested configuration never took effect
+  (SIGNALS-R100.1, security-relevant). The reload comparison now
+  derives a connection identity from the exhaustive pool-affecting
+  field set, guarded by a reflection test so a newly added credential
+  field cannot be silently omitted. Profile-only changes still take
+  effect without dropping the pool. (#328)
 - Snapshot char-type columns (`contype`, `relkind`, `relpersistence`,
   `provolatile`, `prokind`) are now emitted as text via `::text` casts
   instead of the PostgreSQL internal `"char"` type, which pgx decodes as an
