@@ -1825,6 +1825,22 @@ before R099 — every class collapses to that value. A config that
 sets only `retention` activates the per-class logic. Both together
 is a configuration smell that fails fast.
 
+**Atomic pruning (INV-SNAP-STATUS-PAYLOAD producer).** Each
+retention pruning operation removes a run's `query_results` payload
+and its `query_runs` row inside **one SQLite transaction**: both
+deletes commit together or the whole operation rolls back. A crash,
+SQLite error, lock failure, disk fault, or any error after the
+payload delete but before the run delete MUST leave *both* tables
+untouched. This makes retention a safe producer of
+INV-SNAP-STATUS-PAYLOAD — it can never leave a `success` run without
+its joinable payload (the #312 failure class reached via retention).
+The guarantee applies to both the legacy flat helper
+(`DeleteQueryRunsOlderThan`) and the per-class production helper
+(`DeleteQueryRunsOlderThanByClass`). It complements, and does not
+replace, the R110 in-process retention lock: R110 stops a concurrent
+export from observing a mid-delete tear; the transaction guarantees
+the tear can never be *committed* even under process failure.
+
 ### Failure conditions (R099)
 
 - **FC-21**: `signals.retention_days > 0` AND `signals.retention.*`
@@ -1832,6 +1848,10 @@ is a configuration smell that fails fast.
   naming both.
 - **FC-22**: Any of `signals.retention.{short,medium,long}_days`
   negative → `ValidateStrict` hard error.
+- **FC-23**: A retention prune that fails after deleting the
+  `query_results` payload MUST roll back the transaction so the
+  `query_runs` row survives with its payload intact — never a
+  `success` run stripped of its payload.
 
 ### Configuration reload
 

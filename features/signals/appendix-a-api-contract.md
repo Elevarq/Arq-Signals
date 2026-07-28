@@ -444,6 +444,29 @@ consumers:
   success run without a payload makes a consumer silently see no
   evidence — the missing-FK-index miss (Elevarq/Analyzer#1871).*
 
+  **Producers of this invariant.** Collection is not the only path
+  that can violate the status↔payload join; every operation that
+  writes or removes rows in `query_runs` / `query_results` MUST
+  preserve it:
+
+  1. *Collection* (R047) — records `success` only after the payload
+     is encoded and stored (above).
+  2. *Retention cleanup* (R099, R110) — deletes a run's
+     `query_results` payload and its `query_runs` row **atomically**
+     in a single SQLite transaction: both deletes commit together or
+     neither does. A failure, crash, lock error, or disk fault after
+     the payload delete but before the run delete MUST roll both back,
+     so a partially-pruned run can never remain as a `success` run
+     with no joinable payload. This applies to both retention helpers
+     (`DeleteQueryRunsOlderThan`, the legacy flat cutoff, and
+     `DeleteQueryRunsOlderThanByClass`, the per-class production
+     path). *Rationale: the R110 in-process lock stops a concurrent
+     export from reading a mid-delete tear, but it cannot undo an
+     already-committed first DELETE — only a real transaction gives
+     the all-or-nothing guarantee that keeps retention from
+     re-creating the #312 orphaned-success failure from a different
+     path.*
+
 - **INV-CHAR-TEXT.** Collector columns whose PostgreSQL type is the
   internal `"char"` (e.g. `pg_constraint.contype`, `pg_class.relkind`,
   `pg_class.relpersistence`, `pg_proc.provolatile`/`prokind`) MUST be
