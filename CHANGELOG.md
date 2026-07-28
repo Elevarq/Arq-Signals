@@ -6,25 +6,7 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-### Added
-
-- Collector output-contract verification against a live PostgreSQL: an
-  `integration`-tagged test seeds representative schema (parent + child
-  with an unindexed FK), runs the full collection, exports a snapshot ZIP
-  via the production export path, and asserts the per-collector output
-  contract — internal-`"char"` columns serialize as single-char strings
-  (the `contype == "f"` regression lock for #312), spec-declared columns
-  are present, and the status↔payload invariant holds end-to-end. Runs in
-  a new CI job matrixed across PG 14/15/16/17/18 (#314).
-
-### Fixed
-
-- `pg_class_storage_v1` emitted `relpersistence` uncast, so pgx scanned
-  the internal `"char"` as a byte integer (`112`/`117`/`116`) instead of
-  `p`/`u`/`t` — a residual of the #312 class the new #314 harness caught.
-  Now cast `::text` like the other char columns (#314).
-
-## [1.1.0] - 2026-07-22
+## [1.1.0] - 2026-07-28
 
 ### Added
 
@@ -32,15 +14,42 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   (#295).
 - Partitioned-index and relation-kind evidence in `index_health_summary_v2`
   (#298).
+- Collector output-contract verification against a live PostgreSQL: an
+  `integration`-tagged test seeds representative schema (parent + child
+  with an unindexed FK), runs the full collection, exports a snapshot ZIP
+  via the production export path, and asserts the per-collector output
+  contract — internal-`"char"` columns serialize as single-char strings
+  (the `contype == "f"` regression lock for #312), spec-declared columns
+  are present, and the status↔payload invariant holds end-to-end. Runs in
+  a new CI job matrixed across PG 14/15/16/17/18 (#314). Closes the STDD
+  gap where a specification's declared output was never asserted in the
+  exported ZIP end-to-end.
 
 ### Fixed
 
+- Snapshot char-type columns (`contype`, `relkind`, `relpersistence`,
+  `provolatile`, `prokind`) are now emitted as text via `::text` casts
+  instead of the PostgreSQL internal `"char"` type, which pgx decodes as an
+  integer byte value. Previously e.g. `contype` serialized as `102` rather
+  than `"f"`, so a consumer reading the value as a string silently skipped
+  every foreign-key constraint — the root cause of the Analyzer
+  missing-FK-index miss (Elevarq/Analyzer#1871). A collector run is also
+  never marked `success` before its payload is persisted, so
+  `query_runs`/`collector_status` can no longer claim rows the export does
+  not carry (#312, #313).
+- `pg_class_storage_v1` emitted `relpersistence` uncast, so pgx scanned
+  the internal `"char"` as a byte integer (`112`/`117`/`116`) instead of
+  `p`/`u`/`t` — a residual of the #312 class the new #314 harness caught.
+  Now cast `::text` like the other char columns (#314).
 - AWS EC2 deploy paths now forward the whole `signals.env` to the collector,
   not a partial subset (#299).
 
 ### Changed
 
+- Weekly security scan scheduled on the Monday-night cleanup window (#308).
+- Corrected the scheduled-scan timezone to `America/Los_Angeles` (#311).
 - Bump `google.golang.org/api` 0.288.0 -> 0.289.0 (#296).
+- Dependency group bumps: go-minor and actions-minor updates (#309, #310).
 
 ### Security
 
