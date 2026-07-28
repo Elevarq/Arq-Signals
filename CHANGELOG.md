@@ -39,6 +39,20 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- The Helm chart can now deploy the shipped `mtls` (client-certificate)
+  authentication method. Previously `deploy/helm/signals/values.schema.json`
+  rejected `target.authMethod: mtls` and `templates/configmap.yaml`
+  rendered no `sslcert` / `sslkey` / `sslkey_passphrase_file` fields, so a
+  supported target could be hand-configured but not deployed through the
+  chart. The schema now admits `mtls` and adds `target.sslCertFile`,
+  `target.sslKeyFile`, and optional `target.sslKeyPassphraseFile`
+  (conditionally requiring cert+key paths for `mtls`, mirroring
+  config.go FC-MTLS-001); the ConfigMap renders those paths into
+  `signals.yaml` only when set. Only filesystem PATHS reach the values
+  and ConfigMap — certificate, key, and passphrase contents are mounted
+  from a Kubernetes Secret via `extraVolumes` / `extraVolumeMounts`. The
+  chart README authentication table and `docs/database-connections.md`
+  document the mount (#330).
 - Concurrent exports can no longer cross-contaminate each other's
   archives. The daemon shares one long-lived `export.Builder` across
   every `GET /export` request, and request-specific scope (resolved

@@ -25,11 +25,24 @@ target:
   # ambient cloud identity (IRSA / Pod Identity / Workload Identity)
   # mints the credential; see deploy/helm/signals/README.md for
   # per-platform values snippets.
-  authMethod: ""     # "" | aws_rds_iam | azure_entra | gcp_cloudsql_iam | secret_store
+  authMethod: ""     # "" | aws_rds_iam | azure_entra | gcp_cloudsql_iam | secret_store | mtls
   region: ""         # aws_rds_iam: optional (also read from AWS_REGION / IMDS)
   azureClientId: ""  # azure_entra: optional user-assigned MI disambiguation (also AZURE_CLIENT_ID)
   gcpImpersonateServiceAccount: ""  # gcp_cloudsql_iam: optional impersonation target
   secretRef: ""      # secret_store: cloud vault reference (NOT a secret — an ARN/URI/name)
+
+  # Client-certificate auth (authMethod: mtls, #98/#330). For on-prem /
+  # self-managed PostgreSQL that mandates mutual TLS. These are
+  # filesystem PATHS to PEM files — never the certificate/key/passphrase
+  # CONTENTS. Mount the client cert + key (and any passphrase file) from
+  # a Kubernetes Secret via extraVolumes / extraVolumeMounts (below) and
+  # point these at the mount paths. mtls requires BOTH sslCertFile and
+  # sslKeyFile and sslmode: verify-full (config.go FC-MTLS-001/004);
+  # sslKeyPassphraseFile is optional (encrypted keys only). See
+  # deploy/helm/signals/README.md for the full mount snippet.
+  sslCertFile: ""           # PATH to the PEM client certificate
+  sslKeyFile: ""            # PATH to the PEM client private key
+  sslKeyPassphraseFile: ""  # optional PATH to a file holding the key passphrase
 
   # verify-full needs a CA bundle. Mount it via extraVolumes /
   # extraVolumeMounts (below) and point this at the mounted path. In

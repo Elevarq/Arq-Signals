@@ -47,7 +47,9 @@ extraEnv:
 
 `target.authMethod` selects how the collector authenticates. The
 default (empty) is the password method; the rest are **passwordless** —
-the pod's ambient cloud identity mints the credential at connect time.
+the pod's ambient cloud identity mints the credential at connect time
+(`aws_rds_iam` / `azure_entra` / `gcp_cloudsql_iam` / `secret_store`),
+or the pod presents a client certificate (`mtls`).
 
 | `authMethod` | Credential source | Password? |
 |---|---|---|
@@ -56,6 +58,7 @@ the pod's ambient cloud identity mints the credential at connect time.
 | `azure_entra` | Entra OAuth2 token from the pod's Azure identity | no |
 | `gcp_cloudsql_iam` | Google OAuth2 token from the pod's GCP identity | no |
 | `secret_store` | Password fetched from a cloud vault | no |
+| `mtls` | Client X.509 certificate presented from mounted PEM files | no |
 
 Invariants enforced by the chart and the collector:
 
@@ -220,6 +223,57 @@ target:
   sslRootCertFile: /etc/ssl/db/ca.pem
 # ... extraVolumes / extraVolumeMounts for the CA bundle
 ```
+
+### `mtls` — client-certificate auth (self-managed / on-prem)
+
+For self-managed PostgreSQL that mandates mutual TLS, the collector
+presents a client X.509 certificate instead of a password or token
+(`pg_hba.conf` `cert clientcert=verify-full`). The chart takes only the
+**paths** of the PEM files — never their contents. Mount the client
+certificate and private key (and, for an encrypted key, the passphrase
+file) from a Kubernetes Secret via `extraVolumes` / `extraVolumeMounts`,
+then point `sslCertFile` / `sslKeyFile` / `sslKeyPassphraseFile` at the
+mount paths.
+
+`mtls` requires **both** `sslCertFile` and `sslKeyFile`, and
+`sslmode: verify-full` in every environment — a client certificate is
+only presented to a fully verified server. `sslKeyPassphraseFile` is
+optional (encrypted keys only).
+
+```yaml
+target:
+  host: db.internal
+  dbname: appdb
+  user: signals                       # must match the cert CN / pg_ident mapping
+  authMethod: mtls
+  sslmode: verify-full
+  sslCertFile: /etc/signals/mtls/client.crt   # PATH only — mounted below
+  sslKeyFile: /etc/signals/mtls/client.key    # PATH only — mounted below
+  # sslKeyPassphraseFile: /etc/signals/mtls/key.pass  # optional; encrypted key only
+  sslRootCertFile: /etc/ssl/db/ca.pem         # verifies the server
+
+extraVolumes:
+  - name: db-mtls
+    secret:
+      secretName: signals-mtls        # holds client.crt, client.key (+ key.pass)
+extraVolumeMounts:
+  - name: db-mtls
+    mountPath: /etc/signals/mtls
+    readOnly: true
+```
+
+Create the Secret out-of-band so no key material lands in Helm values or
+release history:
+
+```bash
+kubectl create secret generic signals-mtls \
+  --from-file=client.crt=./client.crt \
+  --from-file=client.key=./client.key
+  # --from-file=key.pass=./key.pass   # only if the key is encrypted
+```
+
+The private key is read at connect time and never logged or exported; a
+rotated cert/key is picked up on the next reconnect.
 
 ## CA bundles for `verify-full`
 
