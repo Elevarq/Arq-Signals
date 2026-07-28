@@ -27,6 +27,16 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Retention cleanup now deletes a run's `query_results` payload and its
+  `query_runs` row inside a single SQLite transaction, so both commit
+  together or roll back together (#327). Previously the two deletes ran as
+  separate autocommit statements: a crash, SQLite error, lock failure, or
+  disk fault after the payload delete but before the run delete left a
+  `status=success` run with no joinable payload — re-creating the #312
+  orphaned-success integrity failure from the retention path. Both the
+  legacy flat helper (`DeleteQueryRunsOlderThan`) and the per-class
+  production helper (`DeleteQueryRunsOlderThanByClass`) get the same
+  all-or-nothing guarantee (INV-SNAP-STATUS-PAYLOAD / FC-23).
 - Snapshot char-type columns (`contype`, `relkind`, `relpersistence`,
   `provolatile`, `prokind`) are now emitted as text via `::text` casts
   instead of the PostgreSQL internal `"char"` type, which pgx decodes as an

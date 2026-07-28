@@ -26,6 +26,15 @@ type DB struct {
 	// here — they only add rows, so an export reading "old state"
 	// before a commit remains internally consistent.
 	consistencyMu sync.RWMutex
+
+	// afterResultsDeleteHook, when non-nil, is invoked by the retention
+	// delete helpers between the query_results delete and the
+	// query_runs delete, INSIDE the transaction. It exists only for
+	// failure-injection tests (#327 / FC-23): returning an error from
+	// the hook proves the transaction rolls BOTH deletes back, so a
+	// mid-prune failure can never orphan a success run. It is nil in
+	// production.
+	afterResultsDeleteHook func() error
 }
 
 // LockExports acquires the read lock that protects an export's full read
@@ -954,18 +963,47 @@ func (d *DB) GetQueryResultByRunID(runID string) (*QueryResult, error) {
 	return &res, nil
 }
 
+// DeleteQueryRunsOlderThan (legacy flat cutoff) prunes every
+// query_run collected before `before`, together with its query_results
+// payload.
+//
+// The two deletes run inside ONE SQLite transaction so they commit
+// together or not at all (INV-SNAP-STATUS-PAYLOAD, FC-23, #327).
+// query_results has an FK to query_runs (migration 003) WITHOUT
+// ON DELETE CASCADE, so the payload must be deleted first; wrapping
+// both in a transaction guarantees that a failure, crash, or lock
+// error after the payload delete rolls the payload delete back too —
+// a success run can never be left without its joinable payload (the
+// #312 orphaned-success failure reached from the retention path).
 func (d *DB) DeleteQueryRunsOlderThan(before string) (int64, error) {
+	tx, err := d.sql.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("begin retention delete: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op once committed; on the error path the deferred rollback is the safety net.
+
 	// Delete results first (FK dependency).
-	_, err := d.sql.Exec(`DELETE FROM query_results WHERE run_id IN
-		(SELECT id FROM query_runs WHERE collected_at < ?)`, before)
+	if _, err := tx.Exec(`DELETE FROM query_results WHERE run_id IN
+		(SELECT id FROM query_runs WHERE collected_at < ?)`, before); err != nil {
+		return 0, err
+	}
+	if d.afterResultsDeleteHook != nil {
+		if err := d.afterResultsDeleteHook(); err != nil {
+			return 0, err
+		}
+	}
+	res, err := tx.Exec("DELETE FROM query_runs WHERE collected_at < ?", before)
 	if err != nil {
 		return 0, err
 	}
-	res, err := d.sql.Exec("DELETE FROM query_runs WHERE collected_at < ?", before)
+	n, err := res.RowsAffected()
 	if err != nil {
 		return 0, err
 	}
-	return res.RowsAffected()
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit retention delete: %w", err)
+	}
+	return n, nil
 }
 
 // DeleteQueryRunsOlderThanByClass (R099) prunes query_runs whose
@@ -978,25 +1016,47 @@ func (d *DB) DeleteQueryRunsOlderThan(before string) (int64, error) {
 // snapshot stays alive as long as ANY class is still interested in
 // its data.
 func (d *DB) DeleteQueryRunsOlderThanByClass(class, before string) (int64, error) {
-	_, err := d.sql.Exec(`
+	// Both deletes run inside ONE SQLite transaction so the payload
+	// delete and the run delete commit together or roll back together
+	// (INV-SNAP-STATUS-PAYLOAD, FC-23, #327). See DeleteQueryRunsOlderThan
+	// for the atomicity rationale — this is the per-class production path
+	// and carries the same guarantee.
+	tx, err := d.sql.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("begin retention delete: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op once committed; on the error path the deferred rollback is the safety net.
+
+	if _, err := tx.Exec(`
 		DELETE FROM query_results
 		WHERE run_id IN (
 			SELECT qr.id
 			FROM query_runs qr
 			JOIN query_catalog qc ON qr.query_id = qc.query_id
 			WHERE qc.retention_class = ? AND qr.collected_at < ?
-		)`, class, before)
-	if err != nil {
+		)`, class, before); err != nil {
 		return 0, err
 	}
-	res, err := d.sql.Exec(`
+	if d.afterResultsDeleteHook != nil {
+		if err := d.afterResultsDeleteHook(); err != nil {
+			return 0, err
+		}
+	}
+	res, err := tx.Exec(`
 		DELETE FROM query_runs
 		WHERE query_id IN (SELECT query_id FROM query_catalog WHERE retention_class = ?)
 		  AND collected_at < ?`, class, before)
 	if err != nil {
 		return 0, err
 	}
-	return res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit retention delete: %w", err)
+	}
+	return n, nil
 }
 
 // GetLastRunTimes returns the most recent successful collected_at per
