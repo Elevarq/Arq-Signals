@@ -427,3 +427,29 @@ diagnostic detail and may be non-empty on a skipped row.
 - Each response includes an `X-Request-ID` header for tracing.
 - The server shall include recovery middleware that returns HTTP 500
   with a JSON error body if an unhandled error occurs.
+
+## Snapshot data-integrity invariants (#312)
+
+These invariants ensure the status manifest and the data payload of a
+snapshot never disagree, and that catalog values are readable by
+consumers:
+
+- **INV-SNAP-STATUS-PAYLOAD.** A `query_runs` entry with
+  `status=success` and `row_count=N` MUST have a corresponding
+  `query_results` payload, joinable by `run_id` (`query_runs.id ==
+  query_results.run_id`), containing exactly `N` rows. A run is
+  recorded `success` only *after* its payload is successfully encoded
+  and appended. An `EncodeNDJSON` failure records a `failed` run
+  (`reason=encode_failed`), never an orphaned success. *Rationale: a
+  success run without a payload makes a consumer silently see no
+  evidence — the missing-FK-index miss (Elevarq/Analyzer#1871).*
+
+- **INV-CHAR-TEXT.** Collector columns whose PostgreSQL type is the
+  internal `"char"` (e.g. `pg_constraint.contype`, `pg_class.relkind`,
+  `pg_class.relpersistence`, `pg_proc.provolatile`/`prokind`) MUST be
+  emitted as their **text** representation (`'f'`, `'r'`, …), not the
+  raw byte integer. The pgx driver scans `"char"` as an integer byte
+  value; every consumer reads these as a single-character string, so
+  the collector SQL casts them `::text`. *Rationale: an uncast
+  `contype` serialized as `102` instead of `"f"`, so the analyzer's
+  `contype == "f"` check failed and every FK constraint was skipped.*

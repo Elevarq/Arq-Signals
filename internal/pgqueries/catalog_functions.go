@@ -44,8 +44,7 @@ func init() {
 			p.proname                                    AS funcname,
 			p.proargtypes::text                          AS proargtypes_oids,
 			l.lanname                                    AS prolang_name,
-			p.provolatile,
-			p.proisstrict,
+			p.provolatile::text AS provolatile,			p.proisstrict,
 			p.prosecdef,
 			p.proconfig
 		FROM pg_proc p

@@ -1162,9 +1162,13 @@ func (c *Collector) collectTarget(ctx context.Context, tgt config.TargetConfig, 
 			continue
 		}
 
-		run.RowCount = len(rows)
-		run.Status = "success"
-		runs = append(runs, run)
+		// Do NOT record this run as success yet. A run is success ⟺ its
+		// payload is persisted (#312): the status is set only AFTER a
+		// successful encode + result append below. An encode failure
+		// records a FAILED run — never an orphaned success that would
+		// claim row_count rows while the export carries no payload (a
+		// consumer joining runs→results would then silently see no
+		// evidence — the missing-FK-index miss in Elevarq/Analyzer#1871).
 
 		// FDW post-processing: redact credential-shaped option values
 		// in fdw_*_v1 collector rows BEFORE NDJSON encoding so the
@@ -1192,9 +1196,27 @@ func (c *Collector) collectTarget(ctx context.Context, tgt config.TargetConfig, 
 		// Encode result as NDJSON.
 		payload, compressed, sizeBytes, encErr := db.EncodeNDJSON(rows)
 		if encErr != nil {
+			// INVARIANT (#312): status="success" ⟺ a joinable QueryResult
+			// payload exists with row_count rows. An encode failure must
+			// record a FAILED run, never an orphaned success — otherwise
+			// collector_status/query_runs claim success while
+			// query_results carries no payload, and a consumer silently
+			// sees no evidence.
 			slog.Warn("encode failed", "query", q.ID, "err", encErr)
+			run.Error = encErr.Error()
+			run.Status = "failed"
+			run.Reason = "encode_failed"
+			run.RowCount = len(rows)
+			runs = append(runs, run)
 			continue
 		}
+
+		// Payload encoded — only now is it safe to record the run as
+		// success AND append its result. Kept adjacent so the status
+		// manifest and the data payload can never disagree (#312).
+		run.RowCount = len(rows)
+		run.Status = "success"
+		runs = append(runs, run)
 
 		results = append(results, db.QueryResult{
 			RunID:      runID,
