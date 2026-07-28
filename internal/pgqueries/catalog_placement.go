@@ -62,7 +62,7 @@ func init() {
 			c.oid                                         AS relid,
 			n.nspname                                     AS schemaname,
 			c.relname,
-			c.relkind::text AS relkind,			c.relpersistence,
+			c.relkind::text AS relkind,			c.relpersistence::text AS relpersistence,
 			c.relispartition,
 			c.relhasindex,
 			c.reltuples,
