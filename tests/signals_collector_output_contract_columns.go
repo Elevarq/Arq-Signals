@@ -93,6 +93,13 @@ var zeroRowAllowlist = map[string]string{
 	"replication_slots_risk_v1":    "needs a replication slot; none created on the test server",
 	"pg_stat_replication_slots_v1": "needs a logical replication slot with stats; none created on the test server",
 
+	// --- version-gated: underlying view requires a newer PG than the
+	// older matrix legs, so the collector is skipped / empty there. On the
+	// versions where the view exists these emit rows and ARE column-asserted
+	// (the allowlist is consulted only in the zero-row branch). ---
+	"checkpointer_stats_v1": "reads pg_stat_checkpointer (PG 17+, MinPGVersion 17); version-gated to no rows on the 14/15/16 legs; asserted on 17/18 where it emits its single global row",
+	"pg_stat_io_v1":         "reads pg_stat_io (PG 16+, MinPGVersion 16); no rows on the 14/15 legs (version-gated) and can be empty on a quiescent freshly-started cluster; asserted where it emits rows",
+
 	// --- capability-gated: extension not installed ---
 	"pg_stat_statements_v1":                "requires the pg_stat_statements extension (not installed in the CI/local matrix)",
 	"pgss_capacity_v1":                     "requires the pg_stat_statements extension (not installed)",
