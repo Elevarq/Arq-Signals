@@ -65,6 +65,24 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   successful in-scope run now fails the export (same guard as
   `query_results.ndjson`) instead of emitting a zero-row success stub
   (#322, SIGNALS-R080).
+- Budget exhaustion **during** a collector query now persists the partial
+  cycle instead of discarding it (#329). When a target's per-cycle time
+  budget elapsed while a collector query was running, the query returned a
+  deadline error and the parent budget context was also expired — so the
+  per-query `ROLLBACK TO SAVEPOINT` / `RELEASE SAVEPOINT` that recover the
+  read transaction ran under that expired context, PostgreSQL rejected
+  them, and `collectTarget` returned a hard error before it could append
+  the remaining `budget_exhausted` runs or commit. The result was the exact
+  completeness gap #8 / SIGNALS-R108 closed: no persisted partial snapshot
+  and no status rows for the collectors that never got a turn. The savepoint
+  recovery now runs under a bounded fresh context (mirroring the fresh-context
+  commit), so the recovery succeeds on the still-open connection, every
+  remaining due collector is recorded `skipped`/`budget_exhausted`, the
+  attempted collector is `failed`/`timeout`, and the partial snapshot + the
+  complete run inventory persist atomically as a `partial` cycle. Locked by a
+  live-PostgreSQL, `-race` regression test that forces the budget to expire
+  mid-query (`internal/collector/budget_exhaustion_live_test.go`,
+  `integration`-tagged / `SIGNALS_TEST_PG_DSN`-gated).
 - Retention cleanup now deletes a run's `query_results` payload and its
   `query_runs` row inside a single SQLite transaction, so both commit
   together or roll back together (#327). Previously the two deletes ran as

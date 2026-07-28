@@ -542,6 +542,16 @@ Consequences:
   commit and the SQLite write) shall not be governed by the elapsed
   per-cycle budget context, so an over-budget cycle still persists its
   complete status inventory rather than discarding the whole cycle.
+- The **savepoint recovery after a collector's own query fails on the
+  exhausted budget** shall likewise not be governed by the elapsed
+  per-cycle budget context. When a query returns an error at the moment
+  the budget has elapsed, the parent budget context is also expired;
+  the per-query `ROLLBACK TO SAVEPOINT` and `RELEASE SAVEPOINT` that
+  recover the read transaction shall run under a bounded fresh context
+  so they succeed on the still-open connection. Otherwise the recovery
+  is rejected, the cycle aborts before it can append the remaining
+  `budget_exhausted` runs, and the whole partial cycle is discarded —
+  the exact completeness gap this requirement forbids (#329).
 
 This closes the gap where an over-budget cycle marked some collectors
 successful while leaving the remaining due collectors with no row at
