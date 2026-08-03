@@ -150,14 +150,22 @@ func TestInstanceIDStableAcrossRestarts(t *testing.T) {
 func TestRetentionCleanup(t *testing.T) {
 	store := openTestDB(t)
 
-	_ = store.InsertSnapshot(db.Snapshot{
-		ID: "old-snap", TargetID: 0, CollectedAt: "2020-01-01T00:00:00Z",
+	targetID, err := store.UpsertTarget("retention", "localhost", 5432, "db", "user", "prefer", "NONE", "", true)
+	if err != nil {
+		t.Fatalf("UpsertTarget: %v", err)
+	}
+	if err := store.InsertSnapshot(db.Snapshot{
+		ID: "old-snap", TargetID: targetID, CollectedAt: "2020-01-01T00:00:00Z",
 		PGVersion: "16", Payload: []byte("{}"), SizeBytes: 2,
-	})
-	_ = store.InsertSnapshot(db.Snapshot{
-		ID: "new-snap", TargetID: 0, CollectedAt: "2099-01-01T00:00:00Z",
+	}); err != nil {
+		t.Fatalf("InsertSnapshot old-snap: %v", err)
+	}
+	if err := store.InsertSnapshot(db.Snapshot{
+		ID: "new-snap", TargetID: targetID, CollectedAt: "2099-01-01T00:00:00Z",
 		PGVersion: "16", Payload: []byte("{}"), SizeBytes: 2,
-	})
+	}); err != nil {
+		t.Fatalf("InsertSnapshot new-snap: %v", err)
+	}
 
 	deleted, err := store.DeleteSnapshotsOlderThan("2025-01-01T00:00:00Z")
 	if err != nil {
