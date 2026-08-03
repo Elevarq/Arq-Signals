@@ -209,10 +209,39 @@ func seedWithOrphans(t *testing.T, store *db.DB) (canonical int64, orphans []int
 	return canonical, orphans
 }
 
+// withFKDisabled runs fn with SQLite foreign-key enforcement off,
+// restoring the previous setting afterwards. Orphan fixtures use it to
+// fabricate rows that represent the v0.3.x drift state — rows the FK
+// on snapshots.target_id rejects now that modernc.org/sqlite >= 1.55.0
+// honors the `_foreign_keys=on` DSN parameter. Safe on the store's
+// connection pool because db.Open sets SetMaxOpenConns(1).
+func withFKDisabled(t *testing.T, store *db.DB, fn func()) {
+	t.Helper()
+	var prev int
+	if err := store.SQL().QueryRow("PRAGMA foreign_keys").Scan(&prev); err != nil {
+		t.Fatalf("read foreign_keys pragma: %v", err)
+	}
+	if _, err := store.SQL().Exec("PRAGMA foreign_keys=OFF"); err != nil {
+		t.Fatalf("disable foreign_keys: %v", err)
+	}
+	defer func() {
+		restore := "ON"
+		if prev == 0 {
+			restore = "OFF"
+		}
+		if _, err := store.SQL().Exec("PRAGMA foreign_keys=" + restore); err != nil {
+			t.Fatalf("restore foreign_keys pragma: %v", err)
+		}
+	}()
+	fn()
+}
+
 // insertOneCycle bypasses UpsertTarget so it can write rows with any
 // target_id — including orphan ids that violate the foreign-key
 // intent. Used by seedWithOrphans to simulate the v0.3.x drift bug
-// in stored data without depending on the buggy code.
+// in stored data without depending on the buggy code. FK enforcement
+// is disabled for the insert because the fabricated orphan rows are
+// exactly the legacy state R090 must tolerate.
 func insertOneCycle(t *testing.T, store *db.DB, targetID int64, snapID, collectedAt string) {
 	t.Helper()
 	snap := db.Snapshot{
@@ -230,9 +259,11 @@ func insertOneCycle(t *testing.T, store *db.DB, targetID int64, snapID, collecte
 	results := []db.QueryResult{{
 		RunID: runs[0].ID, Payload: []byte("{\"k\":\"v\"}\n"), SizeBytes: 8,
 	}}
-	if err := store.InsertCollectionAtomic(snap, runs, results); err != nil {
-		t.Fatalf("InsertCollectionAtomic: %v", err)
-	}
+	withFKDisabled(t, store, func() {
+		if err := store.InsertCollectionAtomic(snap, runs, results); err != nil {
+			t.Fatalf("InsertCollectionAtomic: %v", err)
+		}
+	})
 }
 
 // readZipNDJSONIDsFromBuf is a helper specific to this file (cannot

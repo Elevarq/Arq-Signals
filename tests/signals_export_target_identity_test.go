@@ -170,9 +170,11 @@ func TestExportMetadataOmitsTargetIdentityForOrphanSnapshot(t *testing.T) {
 		Payload:     json.RawMessage(`{"version":"PostgreSQL 16.2"}`),
 		SizeBytes:   42,
 	}
-	if err := store.InsertSnapshot(orphan); err != nil {
-		t.Fatalf("InsertSnapshot: %v", err)
-	}
+	withFKDisabled(t, store, func() {
+		if err := store.InsertSnapshot(orphan); err != nil {
+			t.Fatalf("InsertSnapshot: %v", err)
+		}
+	})
 
 	builder := export.NewBuilder(store, "test-instance-id")
 	var buf bytes.Buffer
@@ -341,10 +343,14 @@ func TestExportSnapshotsFailsOnNonOrphanTargetIdentityError(t *testing.T) {
 	}
 
 	// Nuke the targets table so GetTargetIdentity returns a
-	// non-ErrNoRows error ("no such table").
-	if _, err := store.SQL().Exec("DROP TABLE targets"); err != nil {
-		t.Fatalf("DROP TABLE targets: %v", err)
-	}
+	// non-ErrNoRows error ("no such table"). FK enforcement must be
+	// off for the DROP: its implicit delete of the referenced target
+	// row would otherwise violate the FK from the seeded snapshot.
+	withFKDisabled(t, store, func() {
+		if _, err := store.SQL().Exec("DROP TABLE targets"); err != nil {
+			t.Fatalf("DROP TABLE targets: %v", err)
+		}
+	})
 
 	builder := export.NewBuilder(store, "test-instance-id")
 	var buf bytes.Buffer
@@ -375,14 +381,16 @@ func TestExportSnapshotsOmitsTargetIdentityForOrphanRowInMultiTarget(t *testing.
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
-	for _, snap := range []db.Snapshot{
-		{ID: "snap-prod-001", TargetID: prodID, CollectedAt: now, PGVersion: "PostgreSQL 16.2", Payload: json.RawMessage(`{}`), SizeBytes: 42},
-		{ID: "snap-orphan-multi", TargetID: 999999, CollectedAt: now, PGVersion: "PostgreSQL 16.2", Payload: json.RawMessage(`{}`), SizeBytes: 42},
-	} {
-		if err := store.InsertSnapshot(snap); err != nil {
-			t.Fatalf("InsertSnapshot %s: %v", snap.ID, err)
+	withFKDisabled(t, store, func() {
+		for _, snap := range []db.Snapshot{
+			{ID: "snap-prod-001", TargetID: prodID, CollectedAt: now, PGVersion: "PostgreSQL 16.2", Payload: json.RawMessage(`{}`), SizeBytes: 42},
+			{ID: "snap-orphan-multi", TargetID: 999999, CollectedAt: now, PGVersion: "PostgreSQL 16.2", Payload: json.RawMessage(`{}`), SizeBytes: 42},
+		} {
+			if err := store.InsertSnapshot(snap); err != nil {
+				t.Fatalf("InsertSnapshot %s: %v", snap.ID, err)
+			}
 		}
-	}
+	})
 
 	// Use the --all selector so orphans surface (default scope filters
 	// them out per R090).
