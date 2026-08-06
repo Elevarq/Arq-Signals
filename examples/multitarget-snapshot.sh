@@ -17,7 +17,13 @@
 #
 # Usage:
 #   examples/multitarget-snapshot.sh            # render -> up -> collect -> assert
+#   OBS=1 examples/multitarget-snapshot.sh      # + Prometheus + Grafana (for a demo/recording)
 #   examples/multitarget-snapshot.sh --down     # tear the stack down (and volumes)
+#
+# With OBS=1 the stack also runs Prometheus + Grafana (reusing
+# examples/observability/), so Grafana at http://localhost:3000 shows the
+# per-database collection metrics live. The stack is left running for
+# recording; tear it down with --down.
 #
 # Requires: helm, docker (compose v2), curl, python3.
 set -euo pipefail
@@ -25,11 +31,18 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 CHART="$HERE/../deploy/helm/signals"
 COMPOSE="$HERE/docker-compose.multitarget.yml"
+OBS_COMPOSE="$HERE/docker-compose.multitarget.observability.yml"
 RENDERED="$HERE/.rendered-multitarget-signals.yaml"
 TOKEN="dev-local-only-replace-in-prod-32chars"
 BASE="http://localhost:8081"
 
-dc() { docker compose -f "$COMPOSE" "$@"; }
+# Include the observability overlay when OBS=1 (always for --down, so a
+# prior OBS run's Prometheus/Grafana are cleaned up too).
+COMPOSE_ARGS=(-f "$COMPOSE")
+if [ "${OBS:-0}" = "1" ] || [ "${1:-}" = "--down" ]; then
+  COMPOSE_ARGS+=(-f "$OBS_COMPOSE")
+fi
+dc() { docker compose "${COMPOSE_ARGS[@]}" "$@"; }
 
 if [ "${1:-}" = "--down" ]; then dc down -v; rm -f "$RENDERED"; echo "stack down."; exit 0; fi
 
@@ -108,4 +121,28 @@ if [ "$ok" != "1" ]; then
 fi
 echo
 echo "PASS: one Signals install collected from BOTH databases via the chart-rendered targets: config."
-echo "Tear down with: $0 --down"
+
+if [ "${OBS:-0}" = "1" ]; then
+  echo
+  echo "==> observability: waiting for Prometheus to scrape both targets"
+  obs_ok=0
+  for _ in $(seq 1 30); do
+    n="$(curl -fsS 'http://localhost:9090/api/v1/query?query=count(count%20by%20(target)(signals_collection_cycles_total))' 2>/dev/null \
+      | python3 -c 'import sys,json; r=json.load(sys.stdin)["data"]["result"]; print(int(float(r[0]["value"][1])) if r else 0)' 2>/dev/null || echo 0)"
+    if [ "${n:-0}" -ge 2 ]; then obs_ok=1; break; fi
+    sleep 2
+  done
+  if [ "$obs_ok" = "1" ]; then
+    echo "    Prometheus sees both database targets in signals_collection_cycles_total."
+  else
+    echo "    NOTE: Prometheus has not yet shown 2 targets — give it a scrape interval (15s) and refresh."
+  fi
+  echo
+  echo "  Grafana    : http://localhost:3000  (admin / admin) -> dashboard 'Elevarq Signal / Signal operational health'"
+  echo "  Prometheus : http://localhost:9090"
+  echo "  Signals API: http://localhost:8081  (bearer: $TOKEN)"
+  echo
+  echo "  Stack left running for recording. Tear down with: $0 --down"
+else
+  echo "Tear down with: $0 --down"
+fi

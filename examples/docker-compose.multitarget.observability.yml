@@ -1,0 +1,53 @@
+# Observability overlay for the multi-target validation stack (#347/#348).
+#
+# Applied ON TOP of docker-compose.multitarget.yml to add Prometheus +
+# Grafana, so a demo/recording shows one Signals collector's per-database
+# collection metrics live in Grafana. The Prometheus/Grafana assets are
+# reused verbatim from examples/observability/ (single source of truth);
+# the dashboard already groups every panel by the `target` label, so
+# multiple databases show up automatically.
+#
+# Do not run directly — use:  OBS=1 examples/multitarget-snapshot.sh
+# (it renders the multi-target config, then brings up both files).
+
+services:
+  signals:
+    environment:
+      # Turn on the opt-in Prometheus endpoint (R079); it inherits the
+      # same bearer token as the control-plane API.
+      SIGNALS_METRICS_ENABLED: "true"
+      SIGNALS_METRICS_PATH: "/metrics"
+
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=24h"
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/prometheus/signals-token:/etc/prometheus/secrets/signals-token:ro
+      - prometheus-data:/prometheus
+    depends_on:
+      - signals
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+
+volumes:
+  prometheus-data:
+  grafana-data:
