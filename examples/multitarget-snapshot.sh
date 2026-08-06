@@ -50,11 +50,12 @@ command -v helm >/dev/null || { echo "helm not on PATH"; exit 1; }
 
 echo "==> 1/5 rendering the multi-target config from the Helm chart (#347 artifact)"
 helm template signals "$CHART" \
-  --set target.host=pg-primary --set target.user=signals --set target.dbname=postgres \
-  --set target.passwordSecretName=pg-primary-pw \
-  --set 'targets[0].name=analytics' --set 'targets[0].host=pg-analytics' \
+  --set 'targets[0].name=orders' --set 'targets[0].host=pg-orders' \
   --set 'targets[0].user=signals' --set 'targets[0].dbname=postgres' \
-  --set 'targets[0].passwordEnv=PG_PASSWORD_ANALYTICS' \
+  --set 'targets[0].passwordEnv=PG_PASSWORD' \
+  --set 'targets[1].name=analytics' --set 'targets[1].host=pg-analytics' \
+  --set 'targets[1].user=signals' --set 'targets[1].dbname=postgres' \
+  --set 'targets[1].passwordEnv=PG_PASSWORD_ANALYTICS' \
   --show-only templates/configmap.yaml \
   | python3 -c '
 import sys
@@ -76,11 +77,11 @@ print("\n".join(out))
 ' > "$RENDERED"
 
 echo "    rendered targets:"; grep -E '^\s+- name:|^\s+host:' "$RENDERED" | sed 's/^/      /'
-if ! grep -q "name: default" "$RENDERED" || ! grep -q "name: analytics" "$RENDERED"; then
+if ! grep -q "name: orders" "$RENDERED" || ! grep -q "name: analytics" "$RENDERED"; then
   echo "ERROR: rendered config is missing one of the targets:"; cat "$RENDERED"; exit 1
 fi
 
-echo "==> 2/5 bringing up pg-primary + pg-analytics + signals"
+echo "==> 2/5 bringing up pg-orders + pg-analytics + signals"
 dc up -d --build
 
 echo "==> 3/5 waiting for the Signals API"
@@ -97,7 +98,7 @@ import sys, json
 try: s = json.load(sys.stdin)
 except Exception: sys.exit(1)
 tg = {t.get("name"): t for t in s.get("targets", [])}
-need = {"default", "analytics"}
+need = {"orders", "analytics"}
 if not need.issubset(tg): sys.exit(1)
 # require both to have actually collected
 sys.exit(0 if all(tg[n].get("last_collected") for n in need) else 1)

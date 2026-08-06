@@ -29,7 +29,7 @@ Tear down when done: `examples/multitarget-snapshot.sh --down`
 ## Arc (≈2–3 min) — Configure → Install → Collect → Observe
 
 1. **Configure (multiple databases).** Show `examples/.rendered-multitarget-signals.yaml`
-   — the `targets:` list with `default` (pg-primary) and `analytics`
+   — the `targets:` list with `orders` (pg-orders) and `analytics`
    (pg-analytics). Talking point: one install, several databases; only
    paths/refs/env-var names in config, never credentials.
 2. **Install.** Show the bring-up (the collector + both databases starting).
