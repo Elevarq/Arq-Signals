@@ -49,6 +49,49 @@
         }
       ]
     },
+    "targets": {
+      "type": "array",
+      "default": [],
+      "description": "Additional PostgreSQL targets (#347). Each item is rendered into the mounted signals.yaml `targets:` list, in addition to the single `target` above, so one install can monitor several databases. `name` and `host` are required per item; token/secret/mtls auth methods require sslmode verify-full at runtime. Password auth uses passwordFile/passwordEnv (the managed passwordSecretName injection stays single-target).",
+      "items": {
+        "type": "object",
+        "required": ["name", "host"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1, "description": "Target identifier, unique within the install." },
+          "host": { "type": "string", "minLength": 1, "description": "PostgreSQL hostname (e.g. the RDS endpoint)." },
+          "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+          "dbname": { "type": "string" },
+          "user": { "type": "string" },
+          "sslmode": { "type": "string", "enum": ["disable", "allow", "prefer", "require", "verify-ca", "verify-full"] },
+          "authMethod": { "type": "string", "enum": ["", "aws_rds_iam", "azure_entra", "gcp_cloudsql_iam", "secret_store", "mtls"] },
+          "region": { "type": "string" },
+          "azureClientId": { "type": "string" },
+          "gcpImpersonateServiceAccount": { "type": "string" },
+          "secretRef": { "type": "string" },
+          "sslRootCertFile": { "type": "string" },
+          "sslCertFile": { "type": "string", "description": "mtls: filesystem PATH to the PEM client certificate (never its contents)." },
+          "sslKeyFile": { "type": "string", "description": "mtls: filesystem PATH to the PEM client private key (never its contents)." },
+          "sslKeyPassphraseFile": { "type": "string", "description": "mtls: optional filesystem PATH to the encrypted-key passphrase file (never the passphrase itself)." },
+          "passwordFile": { "type": "string", "description": "Password method: filesystem PATH to a mounted password file (never the password itself)." },
+          "passwordEnv": { "type": "string", "description": "Password method: name of an environment variable holding the password (supply it via extraEnv)." }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": { "authMethod": { "const": "mtls" } },
+              "required": ["authMethod"]
+            },
+            "then": {
+              "required": ["sslCertFile", "sslKeyFile"],
+              "properties": {
+                "sslCertFile": { "type": "string", "minLength": 1 },
+                "sslKeyFile": { "type": "string", "minLength": 1 }
+              }
+            }
+          }
+        ]
+      }
+    },
     "collector": {
       "type": "object",
       "properties": {

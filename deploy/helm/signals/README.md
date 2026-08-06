@@ -1,13 +1,56 @@
 # signals Helm chart
 
-Deploys the signals collector. The collector reads a single
-PostgreSQL target from the mounted `signals.yaml` ConfigMap. Set
-`target.host` to render that target; leave it empty and no target
-block is emitted.
+Deploys the signals collector. The collector reads its PostgreSQL
+targets from the mounted `signals.yaml` ConfigMap. Set `target.host`
+to render a single target; leave it empty and no target block is
+emitted. To monitor **several databases** from one install, add a
+`targets:` list (see below) — it renders in addition to the single
+`target`.
 
 > Cloud-side setup (DB roles, IAM bindings, CA bundles) lives in
 > [`docs/database-connections.md`](../../../docs/database-connections.md).
 > This README covers only the Helm wiring.
+
+## Multiple databases (`targets:` list)
+
+`target` (singular) configures one database. To monitor more than one
+from a single Signals install, add a `targets:` list; every entry is
+rendered into `signals.yaml` alongside the single `target` (if set).
+Each item mirrors the `target` fields — `name` and `host` are required;
+`port`/`dbname`/`user`/`sslmode` default to `5432`/`postgres`/`signals`/
+`prefer`.
+
+```yaml
+# One install, three databases.
+target:
+  host: primary.example.com        # the single "default" target (optional)
+  authMethod: aws_rds_iam
+  sslmode: verify-full
+  region: us-east-1
+  sslRootCertFile: /etc/signals/server-ca.crt
+
+targets:
+  - name: replica
+    host: replica.example.com
+    authMethod: aws_rds_iam
+    sslmode: verify-full
+    region: us-east-1
+    sslRootCertFile: /etc/signals/server-ca.crt
+  - name: analytics
+    host: analytics.example.com
+    authMethod: secret_store
+    sslmode: verify-full
+    secretRef: arn:aws:secretsmanager:us-east-1:123456789012:secret:signals-analytics
+```
+
+Only paths, cloud references, and env-var names ever reach values or
+the ConfigMap — never credential contents. Passwordless methods
+(`aws_rds_iam`, `azure_entra`, `gcp_cloudsql_iam`, `secret_store`) and
+`mtls` need no password source. For the **password** method on a list
+entry, use `passwordFile` (a mounted file path) or `passwordEnv` (an
+env-var name you supply via `extraEnv`); the chart-managed
+`target.passwordSecretName` → `PG_PASSWORD` injection stays scoped to
+the single `target` block.
 
 ## Persistent volume prerequisites
 

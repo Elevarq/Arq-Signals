@@ -55,6 +55,35 @@ target:
   passwordSecretName: ""    # Kubernetes secret containing the password
   passwordSecretKey: password
 
+# Additional PostgreSQL targets (#347). When non-empty, every entry here
+# is rendered into the mounted signals.yaml `targets:` list IN ADDITION to
+# the single `target:` above (if its host is set) — so one Signals install
+# can monitor several databases. Each item mirrors the `target:` fields
+# (name + host required; port/dbname/user/sslmode default to
+# 5432/postgres/signals/prefer). INV-HMT-02: only paths, cloud references,
+# and env-var names are rendered — never credential contents.
+#
+# Password auth for list entries is file/env based via `passwordFile` /
+# `passwordEnv` (supply the env var through `extraEnv` / mount the file
+# through `extraVolumes`). The chart-managed `target.passwordSecretName` ->
+# PG_PASSWORD injection stays scoped to the single `target:` block (HMT-R006).
+# Passwordless methods (aws_rds_iam, azure_entra, gcp_cloudsql_iam,
+# secret_store) and mtls need no password source.
+targets: []
+#  - name: replica
+#    host: replica.example.com
+#    dbname: postgres
+#    user: signals
+#    sslmode: verify-full
+#    authMethod: aws_rds_iam
+#    region: us-east-1
+#    sslRootCertFile: /etc/signals/server-ca.crt
+#  - name: analytics
+#    host: analytics.example.com
+#    sslmode: verify-full
+#    authMethod: secret_store
+#    secretRef: arn:aws:secretsmanager:us-east-1:123456789012:secret:signals-analytics
+
 # Collector settings
 collector:
   pollInterval: 5m
