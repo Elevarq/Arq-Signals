@@ -96,6 +96,50 @@ persistence:
   storageClass: signals-gp3
 ```
 
+### Monitoring multiple databases
+
+The single `target` block above monitors one database. To monitor
+**several databases** from one install, add a `targets:` list — every
+entry is rendered alongside the single `target`, so one Signals
+collector covers them all:
+
+```yaml
+# signals-values.yaml — one install, multiple databases
+target:
+  host: <primary-rds-endpoint>
+  dbname: <db>
+  user: signals
+  authMethod: aws_rds_iam
+  sslmode: verify-full
+  sslRootCertFile: /etc/ssl/db/rds-ca.pem
+
+targets:
+  - name: replica
+    host: <replica-rds-endpoint>
+    authMethod: aws_rds_iam
+    sslmode: verify-full
+    region: <region>
+    sslRootCertFile: /etc/ssl/db/rds-ca.pem
+  - name: analytics
+    host: <analytics-rds-endpoint>
+    authMethod: secret_store
+    sslmode: verify-full
+    secretRef: <secrets-manager-arn>
+
+persistence:
+  storageClass: signals-gp3
+```
+
+`name` and `host` are required per entry; `port`/`dbname`/`user`/
+`sslmode` default to `5432`/`postgres`/`signals`/`prefer`. Only paths,
+cloud references, and env-var names ever reach values or the ConfigMap —
+never credential contents. Passwordless methods (`aws_rds_iam`,
+`azure_entra`, `gcp_cloudsql_iam`, `secret_store`) and `mtls` need no
+password source; for the password method on a list entry use
+`passwordFile` / `passwordEnv`. See
+[`deploy/helm/signals/README.md`](../../deploy/helm/signals/README.md)
+§ *Multiple databases* for the full field list.
+
 ```sh
 helm install signals \
   oci://<marketplace-ecr-registry>/<seller-ns>/elevarq-signals-chart \
