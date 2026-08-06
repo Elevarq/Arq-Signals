@@ -5,10 +5,6 @@ walkthrough (screenshots + a short video). This is the **local** version:
 it uses the checked-in multi-target stack, so it is fully repeatable and
 needs no cloud account.
 
-> **Internal-only.** Per the media-asset policy these captures are not
-> for external publication until the patent filing is done and counsel
-> clears them.
-
 ## Prerequisites
 
 - Docker (Compose v2), `helm`, `curl`, `python3`
@@ -54,7 +50,7 @@ Tear down when done: `examples/multitarget-snapshot.sh --down`
    curl -s localhost:8081/export -H "Authorization: Bearer dev-local-only-replace-in-prod-32chars" -o signals-snapshot.zip
    ```
 
-## Screenshot set (matches the #348 acceptance list)
+## Screenshot set (matches the #348 acceptance list, minus the patent-freeze restriction)
 
 - The multi-target config (`targets:` list)
 - Install / bring-up output
