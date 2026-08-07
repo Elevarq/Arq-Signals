@@ -18,6 +18,9 @@ data:
       wal: true
     api:
       listen_addr: "0.0.0.0:{{ .Values.api.port }}"
+    {{- if or .Values.target.host .Values.targets }}
+    targets:
+    {{- end }}
     {{- if .Values.target.host }}
     {{- /*
       #114 — single target rendered into the mounted config. The
@@ -28,7 +31,6 @@ data:
       Optional fields render only when set so the default password
       target stays byte-for-byte minimal.
     */}}
-    targets:
       - name: default
         host: {{ .Values.target.host }}
         port: {{ .Values.target.port }}
@@ -76,5 +78,55 @@ data:
                token/secret methods are passwordless (FC005). */}}
         {{- if and (not .Values.target.authMethod) .Values.target.passwordSecretName }}
         password_env: PG_PASSWORD
+        {{- end }}
+    {{- end }}
+    {{- /*
+      #347 — additional targets from the .Values.targets list, so one
+      install can monitor several databases. Each entry mirrors the
+      single `target` field surface; optional fields render only when
+      set (INV-HMT-02: paths / references / env-var names only, never
+      credential contents). Password auth here is file/env based —
+      the chart-managed passwordSecretName -> PG_PASSWORD injection
+      stays scoped to the single `target` block (HMT-R006).
+    */}}
+    {{- range .Values.targets }}
+      - name: {{ .name }}
+        host: {{ .host }}
+        port: {{ .port | default 5432 }}
+        dbname: {{ .dbname | default "postgres" }}
+        user: {{ .user | default "signals" }}
+        sslmode: {{ .sslmode | default "prefer" }}
+        {{- with .sslRootCertFile }}
+        sslrootcert_file: {{ . }}
+        {{- end }}
+        {{- with .authMethod }}
+        auth_method: {{ . }}
+        {{- end }}
+        {{- with .region }}
+        region: {{ . }}
+        {{- end }}
+        {{- with .azureClientId }}
+        azure_client_id: {{ . }}
+        {{- end }}
+        {{- with .gcpImpersonateServiceAccount }}
+        gcp_impersonate_service_account: {{ . }}
+        {{- end }}
+        {{- with .secretRef }}
+        secret_ref: {{ . }}
+        {{- end }}
+        {{- with .sslCertFile }}
+        sslcert: {{ . }}
+        {{- end }}
+        {{- with .sslKeyFile }}
+        sslkey: {{ . }}
+        {{- end }}
+        {{- with .sslKeyPassphraseFile }}
+        sslkey_passphrase_file: {{ . }}
+        {{- end }}
+        {{- with .passwordFile }}
+        password_file: {{ . }}
+        {{- end }}
+        {{- with .passwordEnv }}
+        password_env: {{ . }}
         {{- end }}
     {{- end }}

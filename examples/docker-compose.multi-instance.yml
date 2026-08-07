@@ -1,0 +1,75 @@
+# Multi-instance observability (#2358) — LOCAL DEV ONLY.
+#
+# Adds a SECOND Signals collector (signals2) so Grafana can drill down by
+# a friendly `signals_instance` label (primary / secondary). Full
+# observability overlay in one file (Prometheus scrapes BOTH collectors +
+# Grafana) so it fully replaces docker-compose.multitarget.observability.yml
+# for the multi-instance run.
+#
+# Run:
+#   docker compose -f docker-compose.multitarget.yml \
+#                  -f docker-compose.multi-instance.yml up -d
+# (renders config first — use the runner, or reuse an existing render.)
+
+services:
+  signals:
+    environment:
+      SIGNALS_METRICS_ENABLED: "true"
+      SIGNALS_METRICS_PATH: "/metrics"
+
+  signals2:
+    image: examples-signals:latest      # reuse the image the base signals builds
+    environment:
+      PG_PASSWORD: monitor_pass
+      PG_PASSWORD_ANALYTICS: monitor_pass
+      SIGNALS_API_TOKEN: dev-local-only-replace-in-prod-32chars
+      SIGNALS_LISTEN_ADDR: "0.0.0.0:8081"
+      SIGNALS_ALLOW_INSECURE_PG_TLS: "true"
+      SIGNALS_ENV: dev
+      SIGNALS_POLL_INTERVAL: 1m
+      SIGNALS_METRICS_ENABLED: "true"
+      SIGNALS_METRICS_PATH: "/metrics"
+    volumes:
+      - signals2-data:/data
+      - ./.rendered-multitarget-signals.yaml:/etc/signals/signals.yaml:ro
+    depends_on:
+      pg-orders:
+        condition: service_healthy
+      pg-analytics:
+        condition: service_healthy
+
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=24h"
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./observability/prometheus/prometheus-multi.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/prometheus/signals-token:/etc/prometheus/secrets/signals-token:ro
+      - prometheus-data:/prometheus
+    depends_on:
+      - signals
+      - signals2
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+
+volumes:
+  signals2-data:
+  prometheus-data:
+  grafana-data:
