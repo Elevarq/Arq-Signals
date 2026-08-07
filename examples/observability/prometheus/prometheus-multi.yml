@@ -1,0 +1,23 @@
+# Multi-instance scrape config (#2358). Scrapes TWO Signals
+# collectors and tags each with a friendly `signals_instance` label so
+# Grafana can drill down by instance. Local/dev only.
+
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: signals
+    metrics_path: /metrics
+    scheme: http
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/secrets/signals-token
+    static_configs:
+      - targets: ["signals:8081"]
+        labels:
+          signals_instance: primary
+      - targets: ["signals2:8081"]
+        labels:
+          signals_instance: secondary
