@@ -192,6 +192,53 @@ func TestExportMetadataOmitsTargetIdentityForOrphanSnapshot(t *testing.T) {
 	}
 }
 
+// #1190 (Workbench) / #353 — the stable-cluster-identity contract the
+// downstream consumers (Analyzer -> Workbench) rely on: target_identity.host
+// is the OPERATOR-CONFIGURED connection host (the DNS endpoint / service name
+// the operator pointed Signals at, stored verbatim from the target config),
+// NOT a resolved server address. Because it is config-derived it is stable
+// across container recreation / K8s reschedule / RDS failover — the churn
+// that made Workbench re-register the same database (with duplicate findings)
+// when it keyed on the ephemeral inet_server_addr. This test reads the
+// exported ZIP and asserts (a) the host is the configured DNS endpoint and
+// (b) the identity block carries no resolved-IP field, so the identity can
+// never be sourced from the churning address.
+func TestExportTargetIdentityIsConfiguredHostForStableClusterIdentity(t *testing.T) {
+	store := openTestDB(t)
+
+	const configuredHost = "tsdemo.abc123.us-east-1.rds.amazonaws.com"
+	targetID, err := store.UpsertTarget(
+		"tsdemo", configuredHost, 5432, "timeseries", "signals_ro",
+		"require", "FILE", "/etc/signals/tsdemo.pw", true,
+	)
+	if err != nil {
+		t.Fatalf("UpsertTarget: %v", err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	if err := store.InsertSnapshot(db.Snapshot{
+		ID: "snap-1190-001", TargetID: targetID, CollectedAt: now,
+		PGVersion: "PostgreSQL 18.0", Payload: json.RawMessage(`{}`), SizeBytes: 42,
+	}); err != nil {
+		t.Fatalf("InsertSnapshot: %v", err)
+	}
+
+	meta := buildScopedExportZIP(t, store, targetID)
+	ident, ok := meta["target_identity"].(map[string]any)
+	if !ok {
+		t.Fatal("metadata.json missing target_identity")
+	}
+	if got := ident["host"]; got != configuredHost {
+		t.Errorf("target_identity.host = %v, want the configured DNS endpoint %q (the stable identity)", got, configuredHost)
+	}
+	// The identity must be config-derived: no resolved-address field may
+	// appear, or a consumer could key on the churning value again (#1190).
+	for _, ipField := range []string{"inet_server_addr", "server_addr", "resolved_host", "ip"} {
+		if _, present := ident[ipField]; present {
+			t.Errorf("target_identity must NOT carry a resolved-address field %q — identity is the configured host, not the ephemeral IP", ipField)
+		}
+	}
+}
+
 // readZipNDJSONRows decodes every line of an ndjson member in a ZIP
 // into map[string]any. Used by the multi-target tests below which
 // need to inspect nested objects (target_identity) per row, not just
