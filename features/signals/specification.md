@@ -1586,7 +1586,10 @@ Invariants:
   authoritative.
 - Backward compatibility: existing consumers that don't read
   `target_identity` continue to work — it is an additive field.
-- **Stable cluster identity (Workbench#1190 / #353).** `target_identity.host`
+- **Stable cluster identity (Workbench#1190 / #353).** The authoritative
+  cross-repo decision behind this invariant is recorded in **Analyzer
+  `docs/architecture/adr-0002-cluster-identity-connect-host.md`** — amend
+  the ADR if the identity model changes. `target_identity.host`
   is the operator-**configured** connection host — stored verbatim from the
   target config (the DNS endpoint / service name the operator pointed Signals
   at), NOT a resolved server address. It is therefore stable across container
