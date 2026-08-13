@@ -11,6 +11,13 @@
 
 version: "2"
 
+run:
+  # Lint the build-tagged code too. Without this golangci-lint compiles
+  # only the default build and never sees `//go:build integration` files,
+  # so lint findings in the integration tests merge green (#357).
+  build-tags:
+    - integration
+
 linters:
   default: standard
   settings:
@@ -34,6 +41,9 @@ linters:
         - (*database/sql.Stmt).Close
         - (*database/sql.Tx).Rollback
         - (*compress/gzip.Writer).Close
+        # pgx is our DB driver; a deferred Conn.Close(ctx) is the same
+        # resource-teardown idiom as (*database/sql.DB).Close above.
+        - (*github.com/jackc/pgx/v5.Conn).Close
         # HTTP response writers are a one-way pipe by the time
         # Encode runs; the connection is already gone if it
         # errors and the handler has no useful recovery.
