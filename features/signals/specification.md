@@ -1586,6 +1586,22 @@ Invariants:
   authoritative.
 - Backward compatibility: existing consumers that don't read
   `target_identity` continue to work — it is an additive field.
+- **Stable cluster identity (Workbench#1190 / #353).** The authoritative
+  cross-repo decision behind this invariant is recorded in **Analyzer
+  `docs/architecture/adr-0002-cluster-identity-connect-host.md`** — amend
+  the ADR if the identity model changes. `target_identity.host`
+  is the operator-**configured** connection host — stored verbatim from the
+  target config (the DNS endpoint / service name the operator pointed Signals
+  at), NOT a resolved server address. It is therefore stable across container
+  recreation, Kubernetes reschedule, and RDS/Aurora failover, whereas the
+  collected `inet_server_addr` (in `cluster_identity_v1`) is the ephemeral
+  resolved IP and churns. Downstream consumers (Analyzer → Workbench) key the
+  stable database/cluster identity on `target_identity.{host,port,dbname}`;
+  the collected `inet_server_addr` is provenance/display only. Signals emits
+  no resolved-address field inside `target_identity`, so a consumer cannot
+  accidentally key on the churning value. This requires no privilege — Signals
+  knows the configured host from its own DSN, so it works on least-privilege
+  read-only roles where the superuser-only `system_identifier` is unavailable.
 
 ### Failure conditions
 
