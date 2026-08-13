@@ -116,7 +116,7 @@ var internalCharColumns = map[string]bool{
 var declaredColumnsByCollector = map[string][]string{
 	"pg_constraints_v1": {
 		"schemaname", "relname", "conname", "contype", "condef",
-		"column_name", "column_position", "relkind",
+		"column_name", "column_position", "relkind", "is_validated",
 	},
 	"pg_class_storage_v1": {
 		"relid", "schemaname", "relname", "relkind", "relpersistence",
@@ -370,6 +370,41 @@ func TestIntegration_CollectorOutputContractAgainstRealPG(t *testing.T) {
 			distinctContype(constraints))
 	}
 
+	// --- #342: pg_constraints_v1.is_validated mirrors pg_constraint
+	// .convalidated. The two seeded NOT VALID constraints MUST surface
+	// is_validated == false; the validated PK/FK above MUST surface true.
+	// This proves the NOT-VALID signal end to end so a consumer reads the
+	// clean catalog boolean instead of string-parsing condef (Analyzer
+	// #1759). is_validated marshals as a JSON bool (never "t"/"f"). ---
+	validity := map[string]bool{}
+	sawValidatedTrue := false
+	for _, row := range constraints {
+		name, _ := row["conname"].(string)
+		v, isBool := row["is_validated"].(bool)
+		if !isBool {
+			t.Errorf("#342: pg_constraints_v1 row %q is_validated is %T (%v), want a JSON bool",
+				name, row["is_validated"], row["is_validated"])
+			continue
+		}
+		validity[name] = v
+		if v {
+			sawValidatedTrue = true
+		}
+	}
+	for _, nv := range []string{"child_amount_nonneg_nv", "child_alt_parent_fk_nv"} {
+		got, present := validity[nv]
+		if !present {
+			t.Errorf("#342: seeded NOT VALID constraint %q missing from pg_constraints_v1 payload (conkey should have emitted a row)", nv)
+			continue
+		}
+		if got {
+			t.Errorf("#342: constraint %q was added NOT VALID but is_validated=true — want false (convalidated must be false)", nv)
+		}
+	}
+	if !sawValidatedTrue {
+		t.Error("#342: no pg_constraints_v1 row with is_validated=true — the seeded validated PK/FK should surface convalidated=true")
+	}
+
 	// --- OC-R005 / INV-04 (the #319 central-fix lock) --------------
 	// The columns #313's per-column ::text sweep left uncast must ALSO
 	// decode as strings, proving OID 18 is normalized at the connection
@@ -605,6 +640,18 @@ func seedRepresentativeSchema(t *testing.T, dsn string) (fdwSeeded bool) {
 		// table + its index also feed the bloat collectors so their
 		// relkind columns ('r'/'i') are exercised (OC-R005 / #319).
 		`CREATE INDEX child_note_idx ON signals_oc_test.child (note)`,
+		// #342 — NOT VALID constraints so pg_constraints_v1.is_validated
+		// (convalidated) has a false case alongside the validated PK/FK
+		// above (which surface true). A NOT VALID constraint is enforced
+		// for new writes but was never checked against existing rows.
+		// Both reference a column, so conkey is non-empty and the
+		// unnest(conkey) join emits a row for each.
+		`ALTER TABLE signals_oc_test.child
+			ADD CONSTRAINT child_amount_nonneg_nv CHECK (amount >= 0) NOT VALID`,
+		`ALTER TABLE signals_oc_test.child ADD COLUMN alt_parent_id bigint`,
+		`ALTER TABLE signals_oc_test.child
+			ADD CONSTRAINT child_alt_parent_fk_nv
+			FOREIGN KEY (alt_parent_id) REFERENCES signals_oc_test.parent(id) NOT VALID`,
 		// An identity column so pg_identity_columns_v1 emits attidentity
 		// (the raw "char" column #313's per-column sweep missed). The
 		// generated column yields attidentity='a'; the plain int/uuid

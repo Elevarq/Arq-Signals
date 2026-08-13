@@ -186,6 +186,7 @@ var auditedTypeAssertions = []typeAssertion{
 	{"bool", "index_health_summary_v1", "is_unique", classBool, false},
 	{"bool", "pg_functions_v1", "security_definer", classBool, false},
 	{"bool", "pg_role_capabilities_v1", "is_superuser", classBool, false},
+	{"bool", "pg_constraints_v1", "is_validated", classBool, false}, // #342 convalidated → NOT VALID signal
 }
 
 // notExercisedTypeClasses records the audited type classes for which no

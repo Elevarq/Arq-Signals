@@ -51,6 +51,23 @@ CREATE TABLE example_data (
     created_at timestamptz DEFAULT now()
 );
 
+-- --- NOT VALID constraints (pg_constraints_v1.is_validated = false) --
+-- A constraint added NOT VALID is enforced for new writes but was never
+-- checked against existing rows, so pg_constraint.convalidated is false.
+-- Every constraint above is validated (is_validated = true); these two
+-- give the is_validated signal a false case to report as well (#342).
+
+-- Self-referential FK on customers, added NOT VALID.
+ALTER TABLE customers ADD COLUMN referred_by bigint;
+ALTER TABLE customers
+    ADD CONSTRAINT customers_referred_by_fk
+    FOREIGN KEY (referred_by) REFERENCES customers(id) NOT VALID;   -- convalidated = false
+
+-- CHECK on orders, added NOT VALID.
+ALTER TABLE orders
+    ADD CONSTRAINT orders_amount_sane_chk
+    CHECK (amount_cents < 1000000000) NOT VALID;                    -- convalidated = false
+
 -- --- Data, so stats/row counts are non-trivial ----------------------
 INSERT INTO customers (email, tier)
 SELECT 'user' || g || '@example.com',
