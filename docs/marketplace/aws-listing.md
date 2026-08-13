@@ -8,30 +8,42 @@ This file is the content + steps we drive via the AWS Marketplace Catalog API
 (`StartChangeSet`); no AMMP web UI is required. The verified publish sequence
 and per-call gotchas live in [`catalog-api/README.md`](catalog-api/README.md).
 
-> **Status: EULA signed off; pre-submission items remain.** Signals is GA at
-> **v1.0.0** (release gate met) and the **EULA wording is finalized and signed
-> off** (product/compliance, 2026-06-30 — see
-> [`EULA-review-notes.md`](EULA-review-notes.md)). Before public submission:
-> (1) add the **website Marketplace-install path**, and (2) operationally
-> confirm the AWS seller-registration entity matches "Scantr LLC d/b/a
-> Elevarq". Then run the Catalog-API sequence (§5). The
-> `SignatureVerificationKey` question is resolved (§6 — it is the inert
-> metering key, not an image-signing requirement).
+> **Status: LIVE and Public on AWS Marketplace** — product
+> `prod-7tz6zxncwjmw4`. The initial launch is complete and the EULA is
+> finalized and signed off (product/compliance, 2026-06-30 — see
+> [`EULA-review-notes.md`](EULA-review-notes.md)). This file is the content
+> + procedure; **the live version set is the Catalog API, not this
+> document** — run `describe-entity` for the current versions and their
+> visibility. Do **not** enumerate live versions here: an earlier hardcoded
+> "GA at v1.0.0, pre-submission" banner drifted for weeks while the product
+> was already public through v1.1.0.
+>
+> **Version policy: only the latest release is offered to the public.** Each
+> release is added with re-host + `AddDeliveryOptions` (§5; a Helm delivery
+> option on this already-public product becomes Public automatically after
+> the ingestion scan — no seller-ops review), then the prior public versions
+> are retired with `RestrictDeliveryOptions` so new buyers see only the
+> current release. The `SignatureVerificationKey` question is resolved
+> (§6 — the inert metering key, not an image-signing requirement).
 
-## 0. Pre-publish gate
+## 0. Launch gate — initial publish (complete)
+
+The initial listing is published; these one-time gates are done. A **new
+release** does not repeat this gate — it follows §5 (re-host +
+`AddDeliveryOptions`) plus the retire-prior step in the version policy above.
 
 - [x] Seller account is a registered seller (free publishing needs no
       tax/bank; independent of the paid Analyzer review).
-- [ ] **v1.0.0** tagged and published (non-prerelease) — `release.yml`. Image +
+- [x] GA tagged and published (non-prerelease) — `release.yml`. Image +
       signed multi-arch OCI Helm chart on ghcr, GitHub Release live.
-- [ ] Marketplace ECR repos created (`AddRepositories`): `elevarq-signals`
-      (image) and `elevarq-signals-chart` (chart).
-- [ ] 1.0.0 image + chart re-hosted into the Marketplace ECR (see
-      [`catalog-api/README.md`](catalog-api/README.md); chart repoints its
+- [x] Marketplace ECR repos created (`AddRepositories`):
+      `elevarq/elevarq-signals` (image) and `elevarq/elevarq-signals-chart`
+      (chart).
+- [x] Image + chart re-hosted into the Marketplace ECR (chart repoints its
       default image to the Marketplace ECR repo, no `ghcr.io`).
-- [ ] Product logo hosted in S3 — `LogoUrl` requires an S3 URL (§1).
-- [ ] EULA rendered to PDF and hosted in S3 for the offer's `CustomEula` term
-      (§4) — gated on legal sign-off.
+- [x] Product logo hosted in S3 — `LogoUrl` requires an S3 URL (§1).
+- [x] EULA rendered to PDF and hosted in S3 for the offer's `CustomEula` term
+      (§4).
 
 ## 1. Product metadata
 
