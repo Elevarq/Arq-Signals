@@ -6,6 +6,27 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-08-13
+
+### Added
+
+- Scheduled auto-export: an optional scheduler exports a diagnostic
+  snapshot to a configured file location after each collection cycle,
+  writing an atomic `<instance>-<UTC-nanos>.zip` per run. Enabled via
+  `SIGNALS_EXPORT_ON_COLLECT` + `SIGNALS_EXPORT_DEST`. Signals collects,
+  stores, and can export on a fixed interval with no external consumer
+  required (SE-R010..R013, SE-INV-01/02) (#350).
+- `pg_constraints_v1` now emits `is_validated` (from
+  `pg_constraint.convalidated`): `false` flags a `NOT VALID` FK/CHECK
+  constraint — enforced for new writes but never validated against
+  existing rows and not trusted by the planner — read from the clean
+  catalog boolean instead of string-parsing `condef` (#342).
+- Helm chart supports multiple PostgreSQL targets in a single release,
+  rendering one collection configuration per target (#347).
+- Examples: a repeatable one-command local snapshot and a
+  constraint-rich seed so the collectors have representative data to
+  report (#339).
+
 ### Fixed
 
 - FC-05 false-clean export gap: a default-scope `GET /export` with no
