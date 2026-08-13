@@ -69,6 +69,13 @@ type SignalsConfig struct {
 	// `per-collector/<query_id>.json` directory to the export ZIP.
 	// Default off — canonical NDJSON layout is unaffected.
 	ExportPerCollectorFiles bool `yaml:"export_per_collector_files"`
+	// #350: scheduled auto-export. When ExportOnCollect is true and
+	// ExportDest is a non-empty directory, Signals writes the latest
+	// snapshot export ZIP to ExportDest after each collection cycle. Both
+	// default off (no scheduled export). What consumes the files is out of
+	// scope for Signals.
+	ExportOnCollect bool   `yaml:"export_on_collect"`
+	ExportDest      string `yaml:"export_dest"`
 }
 
 // CircuitConfig holds the per-target circuit-breaker thresholds
@@ -598,6 +605,15 @@ func applyEnvOverrides(cfg *Config) error {
 		return err
 	} else if ok {
 		cfg.Signals.ExportPerCollectorFiles = b
+	}
+	// #350 — scheduled auto-export to a file location.
+	if b, ok, err := parseEnvBool("SIGNALS_EXPORT_ON_COLLECT"); err != nil {
+		return err
+	} else if ok {
+		cfg.Signals.ExportOnCollect = b
+	}
+	if v := os.Getenv("SIGNALS_EXPORT_DEST"); v != "" {
+		cfg.Signals.ExportDest = v
 	}
 	// File takes precedence over the raw env var when both are set —
 	// matches the _FILE convention used by the official postgres image.

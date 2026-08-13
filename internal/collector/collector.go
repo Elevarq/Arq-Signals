@@ -53,6 +53,10 @@ type Collector struct {
 	targets       []config.TargetConfig // reload-mutable; access via currentTargets() / Targets().
 	interval      time.Duration         // set-at-construction; reload-v1 leaves the ticker armed at boot value.
 	retentionDays int                   // set-at-construction.
+	// afterCycle, when non-nil, is invoked after every completed collection
+	// cycle (#350 scheduled export). Set once via SetAfterCycle before
+	// Run starts, so it is read-only for Run's lifetime (no lock needed).
+	afterCycle func(context.Context)
 	// retention (R099) carries per-class retention thresholds.
 	// Zero-value (Retention.IsSet() == false) means the daemon
 	// uses the flat retentionDays for every class.
@@ -661,7 +665,7 @@ func (c *Collector) Run(ctx context.Context) {
 
 	// Initial collection — force all queries as a baseline. nil filter
 	// means "collect every enabled target".
-	c.runCycle(ctx, true, CollectRequest{})
+	c.cycle(ctx, true, CollectRequest{})
 
 	for {
 		select {
@@ -670,12 +674,30 @@ func (c *Collector) Run(ctx context.Context) {
 			c.closePools()
 			return
 		case <-ticker.C:
-			c.runCycle(ctx, false, CollectRequest{})
+			c.cycle(ctx, false, CollectRequest{})
 		case req := <-c.collectNowCh:
 			slog.Info("on-demand collection triggered", "targets", len(req.Targets), "request_id", req.RequestID)
-			c.runCycle(ctx, true, req)
+			c.cycle(ctx, true, req)
 		}
 	}
+}
+
+// cycle runs one collection cycle and then invokes the post-cycle hook
+// (#350 scheduled export). The hook runs after every cycle — the initial
+// baseline, each scheduled tick, and each on-demand collection — so a fresh
+// export follows every collection. A nil hook (the default) is a no-op.
+func (c *Collector) cycle(ctx context.Context, forceAll bool, req CollectRequest) {
+	c.runCycle(ctx, forceAll, req)
+	if c.afterCycle != nil {
+		c.afterCycle(ctx)
+	}
+}
+
+// SetAfterCycle registers the post-cycle hook (#350). It MUST be called
+// before Run starts; Run is then the only reader, so no synchronisation is
+// needed.
+func (c *Collector) SetAfterCycle(fn func(context.Context)) {
+	c.afterCycle = fn
 }
 
 // CollectNow triggers an immediate collection cycle (non-blocking).

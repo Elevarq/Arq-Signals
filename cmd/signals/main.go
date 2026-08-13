@@ -206,6 +206,23 @@ func run() error {
 		})
 	}
 
+	// #350: scheduled auto-export. When enabled, write the latest snapshot
+	// export ZIP to the configured file location after every collection
+	// cycle. A failed export logs and is skipped — it must never disrupt
+	// collection. Signals has no knowledge of any downstream consumer.
+	if cfg.Signals.ExportOnCollect && cfg.Signals.ExportDest != "" {
+		se := export.NewScheduledExporter(exporter, cfg.Signals.ExportDest, instanceID, nil, slog.Warn)
+		coll.SetAfterCycle(func(ctx context.Context) {
+			path, err := se.ExportLatest(ctx)
+			if err != nil {
+				slog.Warn("scheduled export failed; skipping this cycle", "err", err.Error(), "dest", cfg.Signals.ExportDest)
+				return
+			}
+			slog.Info("scheduled export written", "path", path)
+		})
+		slog.Info("scheduled auto-export enabled", "dest", cfg.Signals.ExportDest, "cadence", "per collection cycle")
+	}
+
 	// Start collector in background.
 	go coll.Run(ctx)
 
