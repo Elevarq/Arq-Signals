@@ -147,13 +147,31 @@ func TestConstraintsCollectorOutputColumns(t *testing.T) {
 	requiredColumns := []string{
 		"schemaname", "relname", "conname", "contype", "condef",
 		"column_name", "column_position", "relkind", "n_live_tup",
-		"confrelname", "confschemaname",
+		"confrelname", "confschemaname", "is_validated",
 	}
 
 	for _, col := range requiredColumns {
 		if !strings.Contains(sql, col) {
 			t.Errorf("pg_constraints_v1 must include column %q in output", col)
 		}
+	}
+}
+
+// TestConstraintsCollectorExposesValidity pins the NOT-VALID signal (#342):
+// the collector must expose pg_constraint.convalidated as the is_validated
+// column so a consumer can flag NOT VALID constraints from the clean catalog
+// boolean rather than string-parsing condef.
+func TestConstraintsCollectorExposesValidity(t *testing.T) {
+	q := pgqueries.ByID("pg_constraints_v1")
+	if q == nil {
+		t.Fatal("pg_constraints_v1 not registered")
+	}
+	sql := strings.ToLower(q.SQL)
+	if !strings.Contains(sql, "convalidated") {
+		t.Error("pg_constraints_v1 must read pg_constraint.convalidated")
+	}
+	if !strings.Contains(sql, "convalidated as is_validated") {
+		t.Error("pg_constraints_v1 must expose convalidated aliased as is_validated")
 	}
 }
 

@@ -30,6 +30,7 @@ Primary consumer: the Elevarq Analyzer first-impression missing-FK-index detecto
 | n_live_tup | bigint | Live tuple count from pg_stat_user_tables |
 | confrelname | text | Referenced table (FK only; empty otherwise) |
 | confschemaname | text | Referenced schema (FK only; empty otherwise) |
+| is_validated | bool | `pg_constraint.convalidated`. `false` means the constraint is `NOT VALID`: it was added without validating existing rows, so it is enforced only for new writes and is not trusted by the planner. `true` for validated constraints. |
 
 ## Multi-column design
 

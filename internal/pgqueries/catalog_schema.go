@@ -47,7 +47,8 @@ func init() {
 			c.relkind::text AS relkind,
 			COALESCE(s.n_live_tup, 0)::bigint AS n_live_tup,
 			COALESCE(rc.relname, '') AS confrelname,
-			COALESCE(rn.nspname, '') AS confschemaname
+			COALESCE(rn.nspname, '') AS confschemaname,
+			con.convalidated AS is_validated
 		FROM pg_constraint con
 		JOIN pg_class c ON c.oid = con.conrelid
 		JOIN pg_namespace n ON n.oid = c.relnamespace
