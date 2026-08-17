@@ -207,6 +207,23 @@ func (b *Builder) SetExportPerCollectorFiles(enabled bool) {
 	b.perCollectorFiles = enabled
 }
 
+// LatestTargetIDs returns the id of every active target that has at least
+// one stored snapshot, one id per target. The scheduled auto-exporter
+// (#350, SIGNALS-R127) uses it to write one snapshot ZIP per target so a
+// downstream consumer receives each database as a separate export — a
+// combined multi-target ZIP is read as a single database.
+func (b *Builder) LatestTargetIDs() ([]int64, error) {
+	snaps, err := b.store.GetLatestSnapshotsPerTarget()
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]int64, 0, len(snaps))
+	for _, s := range snaps {
+		ids = append(ids, s.TargetID)
+	}
+	return ids, nil
+}
+
 // WriteTo writes the ZIP export to the given writer.
 func (b *Builder) WriteTo(w io.Writer, opts Options) error {
 	// R110: hold the export read lock for the whole sequence of store

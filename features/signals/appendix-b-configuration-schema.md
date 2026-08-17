@@ -55,6 +55,16 @@ signals:
                               # directory with the latest-run output
                               # of each collector. Off by default
                               # to keep exports small. See R080.
+  export_on_collect: false    # When true (and export_dest is set),
+                              # write the latest snapshot for EACH
+                              # target as its own export ZIP into
+                              # export_dest at the end of every
+                              # collection cycle — one file per
+                              # database. Off by default (export stays
+                              # pull-only via GET /export). See R127.
+  export_dest: ""             # Destination directory for the scheduled
+                              # per-database export above. Empty
+                              # disables the feature. See R127.
 
 # PostgreSQL targets (one or more)
 targets:
@@ -144,6 +154,8 @@ fields:
 | `SIGNALS_METRICS_ENABLED` | `signals.metrics_enabled` | `false` | Enable the Prometheus `/metrics` endpoint (R079) |
 | `SIGNALS_METRICS_PATH` | `signals.metrics_path` | `/metrics` | Path for the metrics endpoint when enabled |
 | `SIGNALS_EXPORT_PER_COLLECTOR_FILES` | `signals.export_per_collector_files` | `false` | Add `per-collector/<id>.json` files to export ZIPs (R080) |
+| `SIGNALS_EXPORT_ON_COLLECT` | `signals.export_on_collect` | `false` | Write one export ZIP per database into `export_dest` after every collection cycle (R127) |
+| `SIGNALS_EXPORT_DEST` | `signals.export_dest` | `""` | Destination directory for the scheduled per-database export (R127) |
 | `SIGNALS_LISTEN_ADDR` | `api.listen_addr` | `127.0.0.1:8081` | |
 | `SIGNALS_WRITE_TIMEOUT` | `api.write_timeout` | `180s` | |
 | `SIGNALS_DB_PATH` | `database.path` | `/data/signals.db` | |
