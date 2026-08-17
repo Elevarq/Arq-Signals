@@ -213,14 +213,15 @@ func run() error {
 	if cfg.Signals.ExportOnCollect && cfg.Signals.ExportDest != "" {
 		se := export.NewScheduledExporter(exporter, cfg.Signals.ExportDest, instanceID, nil, slog.Warn)
 		coll.SetAfterCycle(func(ctx context.Context) {
-			path, err := se.ExportLatest(ctx)
+			paths, err := se.ExportLatest(ctx)
 			if err != nil {
-				slog.Warn("scheduled export failed; skipping this cycle", "err", err.Error(), "dest", cfg.Signals.ExportDest)
+				slog.Warn("scheduled export failed; some databases may not have been written this cycle",
+					"err", err.Error(), "dest", cfg.Signals.ExportDest, "written", len(paths))
 				return
 			}
-			slog.Info("scheduled export written", "path", path)
+			slog.Info("scheduled export written", "files", len(paths), "dest", cfg.Signals.ExportDest)
 		})
-		slog.Info("scheduled auto-export enabled", "dest", cfg.Signals.ExportDest, "cadence", "per collection cycle")
+		slog.Info("scheduled auto-export enabled (one file per database)", "dest", cfg.Signals.ExportDest, "cadence", "per collection cycle")
 	}
 
 	// Start collector in background.

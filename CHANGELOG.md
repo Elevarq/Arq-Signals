@@ -6,6 +6,18 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Scheduled auto-export (`export_on_collect` / `export_dest`, #350) now writes
+  **one export ZIP per database** instead of a single combined multi-target
+  archive. A directory-sweeping consumer (e.g. the Analyzer snapshot inbox)
+  identifies a database from the single snapshot in an archive, so a combined
+  archive was read as one database — collapsing N collected databases into one.
+  Each target is now exported separately (target-scoped, atomic temp+rename,
+  unique flat `<instance>-t<targetID>-<timestamp>.zip` filename); a per-target
+  failure is isolated and never disrupts collection. Spec: SIGNALS-R127
+  (Elevarq/Signals#368).
+
 ## [1.2.0] - 2026-08-13
 
 ### Added

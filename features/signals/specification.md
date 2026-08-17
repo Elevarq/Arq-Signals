@@ -634,6 +634,57 @@ contains only its own metadata, snapshots, `query_runs`,
 `query_results`, `collector_status`, and optional per-collector data.
 This invariant holds under the Go race detector.
 
+**SIGNALS-R127**: The system shall support **scheduled per-database
+file export** (#350). When `signals.export_on_collect` is true and
+`signals.export_dest` is a non-empty directory path, the daemon shall,
+at the end of **every collection cycle** (the collector's post-cycle
+hook), write the latest snapshot for **each active target as its own
+export ZIP** into `export_dest` — **one file per database**. Both
+settings default off; when off, export stays pull-only via
+`GET /export` (R084) and `signalsctl export`.
+
+Rationale — the downstream consumer (e.g. an Analyzer snapshot inbox
+that sweeps a directory) identifies a database from the single snapshot
+in an export archive. A combined multi-target archive (the R084 default
+scope) is therefore read as a **single** database, collapsing N
+collected databases into one. R127 avoids that by scoping each written
+archive to one target with the same target-scoped export as
+`GET /export?target_id=<id>` (R073), so one collection of N targets
+yields N archives.
+
+Behaviors and invariants:
+
+- **One archive per target per cycle.** For each target id returned by
+  the store's latest-per-target snapshot set, the daemon writes one
+  archive scoped to that target. A cycle over N targets writes N
+  archives; zero targets writes nothing (and is not an error).
+- **INV-SIGNALS-R127-ATOMIC — no partial archive is ever observed.**
+  Each archive is written to a temp file in `export_dest` and renamed
+  into place, so a consumer watching the directory never sees a
+  partially-written ZIP. A write/close/rename failure removes the temp
+  file and leaves no partial final file.
+- **INV-SIGNALS-R127-UNIQUE — a write never overwrites a prior one.**
+  The filename is flat (no subdirectories) and carries the instance id,
+  the target id, and a nanosecond UTC timestamp
+  (`<instance>-t<targetID>-<timestamp>.zip`), so archives are unique
+  across instances, targets, and cycles — including the several targets
+  written within one cycle (same timestamp, distinct target id).
+- **Isolation — one target's failure does not abort the cycle.** A
+  per-target export failure is returned to the post-cycle hook, which
+  logs it and continues; collection is never disrupted (the export runs
+  after the cycle's collection + retention work).
+
+Failure conditions:
+
+- FC-R127-1: `export_dest` empty while `export_on_collect` is true →
+  the feature is inert (the daemon does not enable the post-cycle
+  export). The two-field guard (`ExportOnCollect && ExportDest != ""`)
+  lives at wiring time.
+- FC-R127-2: destination directory cannot be created →
+  `MkdirAll` error surfaced to the hook, logged, no files written.
+- FC-R127-3: target enumeration fails → surfaced to the hook, logged,
+  no files written that cycle; retried next cycle.
+
 **SIGNALS-R073**: The system shall support target-scoped export.
 When exporting for a specific target, query_runs, query_results, and
 collector_status shall contain only data for that target. The
