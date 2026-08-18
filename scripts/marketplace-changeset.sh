@@ -45,6 +45,18 @@
 #   # AddOnName/AddOnType/Namespace in the template are IMMUTABLE across versions
 #   # (signals / observability / signals) — do not change once published.
 #
+#   # For 06-restrict-delivery.json (RETIRE a superseded delivery option once a
+#   # newer version is Public), export the product id and the delivery option id
+#   # to restrict. RestrictDeliveryOptions accepts ONLY options in the Public
+#   # state (a Limited/Restricted one fails INVALID_DELIVERY_OPTIONS_STATUS), and
+#   # must run AFTER the superseding version is Public so the listing is never
+#   # left without a public option. Find the id with describe-entity:
+#   #   aws marketplace-catalog describe-entity --catalog AWSMarketplace \
+#   #     --entity-id $PRODUCT_ID --query 'Details' --output text | \
+#   #     jq '.Versions[].DeliveryOptions[] | {Id,Type,Visibility}'
+#   PRODUCT_ID=prod-xxxx DELIVERY_OPTION_ID=<uuid> \
+#     scripts/marketplace-changeset.sh docs/marketplace/catalog-api/06-restrict-delivery.json
+#
 # Env: AWS_PROFILE (default elevarq), AWS_REGION (default us-east-1).
 # Requires: aws, jq, envsubst (gettext).
 

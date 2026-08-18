@@ -45,6 +45,35 @@ Once the listing is live, extra delivery options can be added — each reuses th
 | EKS add-on, #236 | `AddDeliveryOptions` (`05-add-eks-addon-delivery.json`) | `EksAddOnDeliveryOptionDetails` | Additive; reuses the same image **and** chart as the Helm option. `AddOnName: signals`, `AddOnType: observability`, `Namespace: signals` are **immutable across all future versions** — do not change once published (`INCOMPATIBLE_ADDON_*`). Only **one** add-on option per version. `K8S_VERSIONS` must list only tested EKS versions. Unlike Helm/container options, the add-on option is **not** auto-Public — publishing it is a separate visibility step. See `specifications/marketplace-eks-addon-delivery.md`. |
 | AMI / EC2 Image Builder, #235 | **separate `AmiProduct@1.0` product** (not a delivery option on this container product) | — | **Groundwork only**, demand-gated. The reusable EC2 Image Builder component lives in `deploy/aws/imagebuilder/` (`specifications/marketplace-ami-image-builder.md`); the live AMI product + its onboarding/review are deferred until real EC2-baked-deployment demand. No runnable AMI change-set is committed. |
 
+### Version supersession — retiring an old delivery option (`06-restrict-delivery.json`)
+
+MP ECR tags are immutable and versions accumulate, so each release publishes a
+new delivery option beside the old ones. Once the new version's option is
+**Public**, retire the superseded one with `RestrictDeliveryOptions`
+(`06-restrict-delivery.json`):
+
+```sh
+PRODUCT_ID=prod-7tz6zxncwjmw4 DELIVERY_OPTION_ID=<uuid> \
+  scripts/marketplace-changeset.sh docs/marketplace/catalog-api/06-restrict-delivery.json
+```
+
+Find the delivery option id (and confirm it is `Public`) with `describe-entity`:
+
+```sh
+aws marketplace-catalog describe-entity --catalog AWSMarketplace \
+  --entity-id "$PRODUCT_ID" --region us-east-1 --query 'Details' --output text \
+  | jq '.Versions[] | {VersionTitle} + (.DeliveryOptions[] | {Id,Type,Visibility})'
+```
+
+Rules:
+
+- **Only `Public` options can be restricted.** Batching a `Limited`/`Restricted`
+  option fails `INVALID_DELIVERY_OPTIONS_STATUS` ("Provide delivery options in
+  the public state"). Limited EKS-add-on options were never auto-Public, so they
+  are **not** retired this way — they are already non-buyer-facing.
+- **Retire only AFTER the superseding version is Public**, never before — a
+  restrict-then-add ordering briefly leaves the listing with no public option.
+
 Notes on the ordering, all verified on the pgAgroal launch:
 
 1. **`UpdateInformation` requires all core fields in one call** and works on a
