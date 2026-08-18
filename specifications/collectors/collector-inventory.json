@@ -29,6 +29,10 @@
       "name": "database_sizes_v1"
     },
     {
+      "category": "security",
+      "name": "default_privileges_v1"
+    },
+    {
       "category": "server",
       "name": "extension_inventory_v1"
     },
@@ -75,6 +79,10 @@
     {
       "category": "activity",
       "name": "long_running_txns_v1"
+    },
+    {
+      "category": "security",
+      "name": "object_privileges_v1"
     },
     {
       "category": "schema",

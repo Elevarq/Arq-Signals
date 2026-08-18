@@ -126,6 +126,7 @@ var zeroRowAllowlist = map[string]string{
 	// --- config-gated: needs a non-default server GUC ---
 	"pg_prepared_xacts_v1":   "needs a prepared transaction; max_prepared_transactions defaults to 0 so 2PC is unavailable in the matrix",
 	"pg_db_role_settings_v1": "needs an ALTER ROLE/DATABASE ... SET; the least-privilege collector role cannot ALTER, and the harness avoids mutating global (non-schema) role/database state",
+	"default_privileges_v1":  "reads pg_default_acl, which is empty until an ALTER DEFAULT PRIVILEGES is run; a freshly-seeded database has no default-privilege customization to enumerate (object_privileges_v1 covers the ACLs that exist by default)",
 
 	// --- rare catalog objects: built-in-only in a fresh cluster, not worth a bespoke fixture ---
 	"pg_operators_v1":      "emits only non-extension user-defined operators; a fresh cluster has none and none is seeded (built-ins live in pg_catalog, excluded)",
