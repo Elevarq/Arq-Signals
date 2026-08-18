@@ -6,6 +6,8 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-08-17
+
 ### Added
 
 - Object and default access-privilege collectors: `object_privileges_v1`
@@ -30,6 +32,13 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   unique flat `<instance>-t<targetID>-<timestamp>.zip` filename); a per-target
   failure is isolated and never disrupts collection. Spec: SIGNALS-R127
   (Elevarq/Signals#368).
+
+### Security
+
+- Bumped `golang.org/x/mod` to v0.40.0, clearing two HIGH advisories
+  (GO-2026-6179 / GO-2026-6180 — GOPROXY/GOSUMDB module-integrity issues).
+  `govulncheck` already reported the affected paths were not called; the
+  module version is raised to clear the alerts (#371).
 
 ## [1.2.0] - 2026-08-13
 
