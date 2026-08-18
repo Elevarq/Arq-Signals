@@ -1,0 +1,15 @@
+{
+  "Catalog": "AWSMarketplace",
+  "ChangeSet": [
+    {
+      "ChangeType": "RestrictDeliveryOptions",
+      "Entity": {
+        "Type": "ContainerProduct@1.0",
+        "Identifier": "${PRODUCT_ID}"
+      },
+      "DetailsDocument": {
+        "DeliveryOptionIds": ["${DELIVERY_OPTION_ID}"]
+      }
+    }
+  ]
+}
