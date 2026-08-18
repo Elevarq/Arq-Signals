@@ -51,6 +51,8 @@ Operational health, security, and planner diagnostics.
 | `long_running_txns_v1` | `pg_stat_activity` | 5m | Transactions older than 5 minutes |
 | `blocking_locks_v1` | `pg_stat_activity` | 5m | Lock-blocking chains with wait durations |
 | `login_roles_v1` | `pg_roles` | 6h | Login roles with privilege flags (no password hashes) |
+| `object_privileges_v1` | `pg_class.relacl` + `pg_namespace.nspacl` + `pg_proc.proacl` via `aclexplode()` | 6h | Object/schema/function grants (grantee, privilege, grantable); renders `PUBLIC` explicitly for over-broad-grant analysis |
+| `default_privileges_v1` | `pg_default_acl` via `aclexplode()` | 6h | Default privileges future objects inherit (`ALTER DEFAULT PRIVILEGES` state); empty until customised |
 | `connection_utilization_v1` | `pg_stat_activity` | 5m | Connection counts vs max_connections |
 | `planner_stats_staleness_v1` | `pg_stat_user_tables` + `pg_class` | 1h | Estimate drift and modifications since analyze |
 | `pgss_reset_check_v1` | `pg_stat_statements_info` | 1h | Statistics reset timestamp (requires extension, PG 14+) |

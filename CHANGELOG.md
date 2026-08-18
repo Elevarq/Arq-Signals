@@ -6,6 +6,19 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Object and default access-privilege collectors: `object_privileges_v1`
+  (table/view/matview/sequence/foreign-table `relacl`, schema `nspacl`,
+  function `proacl`) and `default_privileges_v1` (`pg_default_acl`). Both
+  normalise the `aclitem[]` ACLs via `aclexplode()` into (grantee, privilege,
+  grantable) rows, rendering the `PUBLIC` pseudo-role explicitly, so a
+  downstream security-posture analysis can flag over-broad grants — grants to
+  `PUBLIC` or broad privileges on the `public` schema. Category `security`,
+  no extra grant beyond the default `pg_monitor` collection role, role names
+  handled as the existing non-sensitive catalog data. Feeds the
+  `broad-or-public-grants` finding in Analyzer #1757 (#363).
+
 ### Fixed
 
 - Scheduled auto-export (`export_on_collect` / `export_dest`, #350) now writes
