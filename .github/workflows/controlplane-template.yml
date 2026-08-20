@@ -1,0 +1,32 @@
+name: Control Plane template
+
+# Validates the Control Plane Catalog template (deploy/controlplane/signals):
+# positive default render (upstream validate-charts.yml parity) plus this
+# template's fail-fast contract. Scoped to the template path so it only runs
+# when that package changes.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/controlplane/**'
+      - '.github/workflows/controlplane-template.yml'
+  pull_request:
+    paths:
+      - 'deploy/controlplane/**'
+      - '.github/workflows/controlplane-template.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  render-acceptance:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Helm version
+        run: helm version --short
+
+      - name: Chart acceptance tests (positive + negative render)
+        run: bash deploy/controlplane/signals/tests/render-acceptance.sh
