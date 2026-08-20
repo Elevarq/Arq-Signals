@@ -63,15 +63,14 @@ Validation — fail fast on missing/invalid inputs before any resource renders.
 {{- if not .Values.api.token -}}
 {{- fail "api.token is required — generate with `openssl rand -base64 32` (>= 32 chars)" -}}
 {{- end -}}
-{{- $validSsl := list "disable" "prefer" "require" "verify-ca" "verify-full" -}}
+{{- /* The workload runs with SIGNALS_ENV=prod, which requires a verifying TLS
+       mode with a CA cert. Signals rejects require/prefer/disable in prod. */ -}}
+{{- $validSsl := list "verify-ca" "verify-full" -}}
 {{- if not (has .Values.postgres.sslMode $validSsl) -}}
-{{- fail (printf "postgres.sslMode '%s' is invalid. Must be one of: %s" .Values.postgres.sslMode (join ", " $validSsl)) -}}
+{{- fail (printf "postgres.sslMode '%s' is not allowed: the workload runs with SIGNALS_ENV=prod, which requires verify-ca or verify-full (require/prefer/disable are rejected by Signals in prod)." .Values.postgres.sslMode) -}}
 {{- end -}}
-{{- if or (eq .Values.postgres.sslMode "disable") (eq .Values.postgres.sslMode "prefer") -}}
-{{- fail "postgres.sslMode 'disable'/'prefer' is not allowed: the workload runs with SIGNALS_ENV=prod, which requires TLS. Use require, verify-ca or verify-full." -}}
-{{- end -}}
-{{- if and (or (eq .Values.postgres.sslMode "verify-ca") (eq .Values.postgres.sslMode "verify-full")) (not .Values.postgres.caCert) -}}
-{{- fail (printf "postgres.caCert (PEM CA bundle) is required when postgres.sslMode is '%s'" .Values.postgres.sslMode) -}}
+{{- if not .Values.postgres.caCert -}}
+{{- fail (printf "postgres.caCert (PEM CA bundle) is required for sslMode '%s'. For managed PostgreSQL use the provider bundle (e.g. Amazon RDS: https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem)." .Values.postgres.sslMode) -}}
 {{- end -}}
 {{- end -}}
 

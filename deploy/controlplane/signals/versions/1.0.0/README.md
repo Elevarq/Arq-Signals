@@ -45,6 +45,7 @@ The image is pinned by immutable digest
 | `postgres.host` | PostgreSQL hostname/IP reachable from the GVC |
 | `postgres.user` | The read-only role above |
 | `postgres.password` | Password for that role (stored in a Control Plane secret) |
+| `postgres.caCert` | PEM CA bundle to verify the server cert (TLS is `verify-full` in prod). Managed PostgreSQL: use the provider bundle, e.g. [Amazon RDS](https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem) |
 | `api.token` | API bearer token, `openssl rand -base64 32` (≥ 32 chars) |
 
 ## Common optional inputs
@@ -53,8 +54,7 @@ The image is pinned by immutable digest
 |-------|---------|-------------|
 | `postgres.port` | `5432` | |
 | `postgres.database` | `postgres` | Database to connect to |
-| `postgres.sslMode` | `require` | `require` \| `verify-ca` \| `verify-full` (`disable`/`prefer` are rejected in prod) |
-| `postgres.caCert` | — | PEM CA bundle, **required** for `verify-ca`/`verify-full` |
+| `postgres.sslMode` | `verify-full` | `verify-full` \| `verify-ca` (weaker modes are rejected by Signals in prod) |
 | `collection.pollInterval` | `5m` | Time between collection cycles |
 | `collection.retentionDays` | `30` | Snapshot retention window |
 | `logLevel` | `info` | `debug` \| `info` \| `warn` \| `error` |

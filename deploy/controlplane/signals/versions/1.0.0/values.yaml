@@ -34,11 +34,13 @@ postgres:
   database: "postgres"   # database to connect to
   user: ""               # REQUIRED — read-only role (see README: minimum grants)
   password: ""           # REQUIRED — stored in a Control Plane dictionary secret
-  # TLS to PostgreSQL. Recommended: require (default) or verify-full.
-  # One of: disable | prefer | require | verify-ca | verify-full
-  # `disable` / `prefer` are rejected because the workload runs with SIGNALS_ENV=prod.
-  sslMode: "require"
-  # PEM CA bundle — REQUIRED only for sslMode verify-ca / verify-full.
+  # TLS to PostgreSQL. The workload runs with SIGNALS_ENV=prod, which requires a
+  # verifying mode with a CA cert — `verify-full` (default) or `verify-ca`.
+  # Weaker modes (require / prefer / disable) are rejected by Signals in prod.
+  sslMode: "verify-full"
+  # PEM CA bundle — REQUIRED (verify-full/verify-ca need it to verify the server
+  # certificate). For managed PostgreSQL use the provider bundle, e.g. Amazon RDS:
+  # https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
   # Stored in a Control Plane opaque secret and mounted read-only into the workload.
   caCert: ""
 
