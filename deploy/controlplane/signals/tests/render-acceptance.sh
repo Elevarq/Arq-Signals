@@ -53,10 +53,16 @@ if OUT="$(render)"; then
   else
     fail "R012 high-sensitivity default drift (expected \"false\")"
   fi
-  if echo "$OUT" | grep -qE 'protocol: tcp'; then
-    pass "R012 egress restricted to a TCP port (outboundAllowPort)"
+  EGRESS="$(echo "$OUT" | grep -A2 'outboundAllowPort:')"
+  if echo "$EGRESS" | grep -qE 'number: 5432' && echo "$EGRESS" | grep -qE 'protocol: tcp'; then
+    pass "R012 egress scoped to outboundAllowPort tcp/5432"
   else
-    fail "R012 egress not port-scoped (outboundAllowPort missing)"
+    fail "R012 egress not scoped to outboundAllowPort tcp/5432"
+  fi
+  if echo "$OUT" | grep -q 'api-token: "00000000000000000000000000000000"'; then
+    pass "R008 fail-closed token sentinel rendered exactly"
+  else
+    fail "R008 fail-closed token sentinel missing or changed"
   fi
 else
   fail "R001 default render failed:"; echo "$OUT" | tail -3
@@ -87,8 +93,11 @@ neg R009 "inboundAllowType=public"   --set firewall.internal.inboundAllowType=pu
 neg R009 "bad performanceClass"      --set storage.performanceClass=nvme
 neg R010 "port < 1"                  --set postgres.port=0
 neg R010 "port > 65535"              --set postgres.port=70000
+neg R010 "boolean port"              --set postgres.port=true
+neg R010 "fractional port"          --set-json postgres.port=5432.5
 neg R010 "capacity < 10"             --set storage.capacity=9
 neg R010 "capacity > 65536"          --set storage.capacity=65537
+neg R010 "fractional capacity"      --set-json storage.capacity=10.5
 neg R010 "high-throughput + 10GiB"   --set storage.performanceClass=high-throughput-ssd
 neg R011 "export.dest outside /data" --set export.onCollect=true --set export.dest=/tmp/exports
 neg R011 "empty export.dest"         --set export.onCollect=true --set-string export.dest=
@@ -98,12 +107,28 @@ neg R012 "string metrics.enabled"    --set-string metrics.enabled=false
 neg R013 "invalid pollInterval"      --set-string collection.pollInterval=garbage
 neg R013 "zero pollInterval"         --set-string collection.pollInterval=0s
 neg R013 "retentionDays < 1"         --set collection.retentionDays=0
+neg R013 "boolean retentionDays"     --set collection.retentionDays=true
+neg R013 "fractional retentionDays"  --set-json collection.retentionDays=1.5
+
+echo "== positive Go durations (must render) =="
+for d in 5m 1h30m 500ms 1.5h .5s +5m 1µs 1μs; do
+  if render --set-string "collection.pollInterval=$d" >/dev/null 2>&1; then
+    pass "R013 accepts valid duration: $d"
+  else
+    fail "R013 rejects valid duration: $d"
+  fi
+done
 
 echo "== positive opt-ins (must render) =="
 if render --set export.onCollect=true >/dev/null 2>&1; then
   pass "R011 export.onCollect=true renders (default dest under /data)"
 else
   fail "R011 export.onCollect=true failed to render"
+fi
+if render --set postgres.port=6432 2>/dev/null | grep -A2 'outboundAllowPort:' | grep -q 'number: 6432'; then
+  pass "R012 overridden postgres.port propagates to outboundAllowPort"
+else
+  fail "R012 overridden postgres.port not reflected in outboundAllowPort"
 fi
 if render --set collection.highSensitivityCollectorsEnabled=true >/dev/null 2>&1; then
   pass "R012 highSensitivityCollectorsEnabled=true renders"
