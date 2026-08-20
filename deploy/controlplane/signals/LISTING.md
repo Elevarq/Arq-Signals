@@ -14,11 +14,12 @@ Source of truth for the catalog-facing text. Keep in sync with the live listing.
 
 Elevarq Signals is a read-only PostgreSQL diagnostic collector. It connects to a
 PostgreSQL database you already run, gathers statistics and metadata with an
-approved read-only SQL set (102 queries), and writes portable `signals-snapshot`
-ZIP archives to a local volume. Signals initiates no outbound telemetry and no
-automatic upload, and there is no AI or LLM inside Signals — it is the collection
-layer, not the Elevarq Analyzer. Snapshots stay on the workload until you retrieve
-them.
+approved read-only SQL set (102 queries), and stores snapshot history in an
+embedded SQLite database on a local volume. Portable `signals-snapshot` ZIP
+archives are served on demand via the API; optional scheduled drop-to-disk is off
+by default. Signals initiates no outbound telemetry and no automatic upload, and
+there is no AI or LLM inside Signals — it is the collection layer, not the Elevarq
+Analyzer. Snapshots stay on the workload until you retrieve them.
 
 Read-only is enforced in three independent layers: static SQL linting, a
 session-level `default_transaction_read_only=on`, and a per-query

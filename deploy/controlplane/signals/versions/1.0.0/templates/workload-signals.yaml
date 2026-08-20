@@ -118,6 +118,11 @@ spec:
     external:
       outboundAllowCIDR:
         {{- toYaml .Values.firewall.external.outboundAllowCIDR | nindent 8 }}
+      # Restrict egress to TCP on the PostgreSQL port, so a compromised workload
+      # cannot reach arbitrary destination ports even though the CIDR is broad.
+      outboundAllowPort:
+        - number: {{ int .Values.postgres.port }}
+          protocol: tcp
     internal:
       inboundAllowType: {{ .Values.firewall.internal.inboundAllowType }}
       {{- if .Values.firewall.internal.workloads }}

@@ -46,7 +46,7 @@ The image is pinned by immutable digest
 | `postgres.user` | The read-only role above |
 | `postgres.password` | Password for that role (stored in a Control Plane secret) |
 | `postgres.caCert` | PEM CA bundle to verify the server cert (TLS is `verify-full` in prod). Managed PostgreSQL: use the provider bundle, e.g. [Amazon RDS](https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem) |
-| `api.token` | API bearer token, `openssl rand -base64 32` (≥ 32 chars) |
+| `api.token` | API bearer token, `openssl rand -base64 32` (≥ 32 chars, ≥ 8 distinct). The default is a fail-closed placeholder Signals rejects at startup — you must set a real one |
 
 ## Common optional inputs
 

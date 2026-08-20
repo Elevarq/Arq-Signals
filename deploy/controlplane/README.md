@@ -95,16 +95,20 @@ Signals uses **`observability`**.
 5. **Image:** pin by **immutable digest** (`repo@sha256:…`). Control Plane pulls
    `linux/amd64` for managed locations, so the image index **must** contain an
    amd64 manifest. Public `ghcr.io` images pull without a pull secret.
-6. **Validation (all local, no account writes):**
+6. **Validation (all local, no account writes):** match the upstream
+   `validate-charts.yml`, which renders with **default values** plus a dummy GVC —
+   so the chart must render from defaults (ship renderable placeholder defaults;
+   see below).
    ```bash
    cd <product>/versions/<semver>
    helm dependency build
-   helm lint . -f test-values.yaml        # cpln resources warn on metadata.name — expected
-   helm template rel . -f test-values.yaml   # inspect the rendered cpln YAML
+   helm lint .                                          # metadata.name warns — expected
+   helm template validation . --set global.cpln.gvc=validation-gvc   # inspect rendered cpln YAML
    ```
    The `metadata.name` lint warnings are benign: Control Plane resources use a
    top-level `name:`, which Helm's Kubernetes linter doesn't recognize. They
-   appear for every catalog template.
+   appear for every catalog template. Also run the product's own acceptance suite
+   (e.g. `signals/tests/render-acceptance.sh`) for the positive + negative cases.
 7. **Publish (external gate):** open a PR to `controlplane-com/templates` adding
    `<product>/…`. Control Plane reviews and merges; the workflow publishes the
    chart to `oci://ghcr.io/controlplane-com/templates`. **Do not** expect a
