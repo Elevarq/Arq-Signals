@@ -97,11 +97,12 @@ Validation — fail fast on missing/invalid inputs before any resource renders.
 {{- fail "api.token must contain at least 8 distinct characters (openssl rand -base64 32)" -}}
 {{- end -}}
 {{- $poll := .Values.collection.pollInterval | toString -}}
-{{- if or (not (regexMatch "^([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))+$" $poll)) (not (regexMatch "[1-9]" $poll)) -}}
+{{- if or (not (regexMatch "^\\+?(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+$" $poll)) (not (regexMatch "[1-9]" $poll)) -}}
 {{- fail "collection.pollInterval must be a positive Go duration (e.g. 30s, 5m, 1h)" -}}
 {{- end -}}
-{{- if lt (int .Values.collection.retentionDays) 1 -}}
-{{- fail "collection.retentionDays must be at least 1 (a finite retention window)" -}}
+{{- $retention := .Values.collection.retentionDays | toString -}}
+{{- if or (not (regexMatch "^[0-9]+$" $retention)) (lt (int $retention) 1) -}}
+{{- fail "collection.retentionDays must be a positive integer (>= 1)" -}}
 {{- end -}}
 {{- if and .Values.export.onCollect (not .Values.export.dest) -}}
 {{- fail "export.dest is required when export.onCollect is true (use a path on the persistent volume, e.g. /data/exports)" -}}
@@ -116,7 +117,11 @@ Validation — fail fast on missing/invalid inputs before any resource renders.
 {{- if not (has .Values.logLevel $logLevels) -}}
 {{- fail (printf "logLevel '%s' is invalid; use one of: %s" .Values.logLevel (join ", " $logLevels)) -}}
 {{- end -}}
-{{- $port := int .Values.postgres.port -}}
+{{- $portRaw := .Values.postgres.port | toString -}}
+{{- if not (regexMatch "^[0-9]+$" $portRaw) -}}
+{{- fail "postgres.port must be an integer between 1 and 65535" -}}
+{{- end -}}
+{{- $port := int $portRaw -}}
 {{- if or (lt $port 1) (gt $port 65535) -}}
 {{- fail "postgres.port must be between 1 and 65535" -}}
 {{- end -}}
@@ -124,7 +129,11 @@ Validation — fail fast on missing/invalid inputs before any resource renders.
 {{- if not (has .Values.storage.performanceClass $classes) -}}
 {{- fail (printf "storage.performanceClass must be one of: %s" (join ", " $classes)) -}}
 {{- end -}}
-{{- $capacity := int .Values.storage.capacity -}}
+{{- $capacityRaw := .Values.storage.capacity | toString -}}
+{{- if not (regexMatch "^[0-9]+$" $capacityRaw) -}}
+{{- fail "storage.capacity must be an integer number of GiB" -}}
+{{- end -}}
+{{- $capacity := int $capacityRaw -}}
 {{- if or (lt $capacity 10) (gt $capacity 65536) -}}
 {{- fail "storage.capacity must be between 10 and 65536 GiB" -}}
 {{- end -}}
