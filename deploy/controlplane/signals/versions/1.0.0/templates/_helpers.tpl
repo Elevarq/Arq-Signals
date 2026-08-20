@@ -72,6 +72,9 @@ Validation — fail fast on missing/invalid inputs before any resource renders.
 {{- if not .Values.postgres.caCert -}}
 {{- fail (printf "postgres.caCert (PEM CA bundle) is required for sslMode '%s'. For managed PostgreSQL use the provider bundle (e.g. Amazon RDS: https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem)." .Values.postgres.sslMode) -}}
 {{- end -}}
+{{- if and .Values.export.onCollect (not .Values.export.dest) -}}
+{{- fail "export.dest is required when export.onCollect is true (use a path on the persistent volume, e.g. /data/exports)" -}}
+{{- end -}}
 {{- end -}}
 
 {{/*

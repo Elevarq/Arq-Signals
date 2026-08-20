@@ -63,6 +63,18 @@ collection:
   pollInterval: "5m"   # time between collection cycles (e.g. 5m, 1h)
   retentionDays: 30    # days of snapshots retained in the local SQLite store
 
+# ---------------------------------------------------------------------------
+# Snapshot export. Signals always serves snapshots on demand via GET /export.
+# With onCollect enabled it ALSO drops one ZIP per database into `dest` after
+# every collection cycle (files are timestamped and accumulate — see README:
+# they are not pruned, so sync them out and/or size storage.capacity).
+# `dest` must be on the persistent volume (/data...) to survive restarts; the
+# directory is created automatically.
+# ---------------------------------------------------------------------------
+export:
+  onCollect: true
+  dest: "/data/exports"
+
 # debug | info | warn | error
 logLevel: "info"
 

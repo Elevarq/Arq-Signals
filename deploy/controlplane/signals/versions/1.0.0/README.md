@@ -59,6 +59,8 @@ The image is pinned by immutable digest
 | `collection.retentionDays` | `30` | Snapshot retention window |
 | `logLevel` | `info` | `debug` \| `info` \| `warn` \| `error` |
 | `metrics.enabled` | `false` | Prometheus `/metrics` (behind the API token) |
+| `export.onCollect` | `true` | Drop one ZIP per database into `export.dest` after each cycle (see Snapshot exports) |
+| `export.dest` | `/data/exports` | Directory for dropped ZIPs — keep it on the volume (`/data...`) |
 | `resources.cpu` / `resources.memory` | `100m` / `128Mi` | |
 | `storage.capacity` | `10` | Volume size in GiB (Control Plane minimum is 10) |
 
@@ -72,6 +74,27 @@ The image is pinned by immutable digest
 - **Trigger a collection now:** `POST /collect/now` (bearer auth).
 - **Download a snapshot:** `GET /export` (bearer auth) → a `signals-snapshot.v1` ZIP.
 - **Metrics:** `GET /metrics` (bearer auth) when `metrics.enabled=true`.
+
+## Snapshot exports
+
+Snapshots are always available two ways:
+
+- **Pull (always on):** `GET /export` (bearer) streams a `signals-snapshot.v1` ZIP.
+- **Drop to disk (`export.onCollect`, on by default):** after every collection
+  cycle Signals writes one ZIP per database into `export.dest` (default
+  `/data/exports` on the persistent volume), named
+  `<instance>-t<targetID>-<UTC>.zip`. The directory is created automatically.
+
+Retrieving dropped files: list/copy them with
+`cpln workload exec <name> --gvc <gvc> -- ls -la /data/exports`, or run a
+sidecar/second workload that mounts the same volume and syncs the directory to
+object storage.
+
+> **Files accumulate.** Dropped ZIPs are timestamped and never overwritten, and
+> Signals does not prune them (only the SQLite store honours
+> `collection.retentionDays`). Sync them out and delete, or size
+> `storage.capacity` for your cadence and retention. Set `export.onCollect=false`
+> to disable dropping and rely on `GET /export` only.
 
 ## Security model
 
