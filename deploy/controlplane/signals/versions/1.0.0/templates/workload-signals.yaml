@@ -37,6 +37,13 @@ spec:
           value: {{ .Values.collection.retentionDays | quote }}
         - name: SIGNALS_METRICS_ENABLED
           value: {{ .Values.metrics.enabled | quote }}
+        {{- if .Values.export.onCollect }}
+        # Drop one ZIP per database into dest after each collection cycle.
+        - name: SIGNALS_EXPORT_ON_COLLECT
+          value: "true"
+        - name: SIGNALS_EXPORT_DEST
+          value: {{ .Values.export.dest | quote }}
+        {{- end }}
         # --- PostgreSQL target (customer-supplied external database) ---
         - name: SIGNALS_TARGET_NAME
           value: {{ .Values.postgres.name | default "default" | quote }}
