@@ -3,8 +3,8 @@
 A lightweight, **read-only PostgreSQL diagnostic and telemetry collector**. Signals
 connects to an existing PostgreSQL database that *you* supply, collects statistics
 using an approved read-only SQL set, and stores portable snapshots on a local
-volume. No data ever leaves the workload — there is no AI, no analytics upload,
-and no phone-home.
+volume. Signals initiates no telemetry and no automatic upload; snapshots stay on
+the workload until you retrieve them. There is no AI in Signals.
 
 > Signals is the **collection layer** only. It is not the Elevarq Analyzer and
 > performs no AI analysis. Snapshots are collected locally and downloaded via the
@@ -17,7 +17,7 @@ and no phone-home.
 | `workload` (stateful, single replica) | The Signals collector daemon |
 | `volumeset` | Persistent `/data` store for the SQLite snapshot database |
 | `secret` (dictionary) | PostgreSQL password + API bearer token |
-| `secret` (opaque, optional) | PEM CA bundle for `verify-ca`/`verify-full` TLS |
+| `secret` (opaque, required) | PEM CA bundle for `verify-ca`/`verify-full` TLS |
 | `identity` + `policy` | Least-privilege `reveal` access to the secrets above |
 
 The image is pinned by immutable digest
@@ -57,12 +57,15 @@ The image is pinned by immutable digest
 | `postgres.sslMode` | `verify-full` | `verify-full` \| `verify-ca` (weaker modes are rejected by Signals in prod) |
 | `collection.pollInterval` | `5m` | Time between collection cycles |
 | `collection.retentionDays` | `30` | Snapshot retention window |
+| `collection.highSensitivityCollectorsEnabled` | `true` | Set `false` to exclude collectors that can capture live query text (`pg_stat_activity`) and object definitions (views/triggers/function bodies) from snapshots |
 | `logLevel` | `info` | `debug` \| `info` \| `warn` \| `error` |
 | `metrics.enabled` | `false` | Prometheus `/metrics` (behind the API token) |
 | `export.onCollect` | `true` | Drop one ZIP per database into `export.dest` after each cycle (see Snapshot exports) |
-| `export.dest` | `/data/exports` | Directory for dropped ZIPs — keep it on the volume (`/data...`) |
+| `export.dest` | `/data/exports` | Directory for dropped ZIPs — must be on the volume (`/data...`) |
 | `resources.cpu` / `resources.memory` | `100m` / `128Mi` | |
-| `storage.capacity` | `10` | Volume size in GiB (Control Plane minimum is 10) |
+| `storage.capacity` | `10` | Volume size in GiB (≥ 10; ≥ 200 for `high-throughput-ssd`) |
+| `storage.performanceClass` | `general-purpose-ssd` | `general-purpose-ssd` \| `high-throughput-ssd` |
+| `firewall.external.outboundAllowCIDR` | `[0.0.0.0/0]` | Egress to PostgreSQL. Hostname firewall rules can't reach 5432, so this is a CIDR; narrow it to your DB if it has a stable IP |
 
 ## Verifying it works
 
@@ -100,8 +103,9 @@ object storage.
 
 - Read-only enforced in three layers: static SQL linting, session
   `default_transaction_read_only=on`, and per-query `BEGIN READ ONLY`.
-- Runs as non-root (UID/GID 10001), all capabilities dropped, no privilege
-  escalation, TLS to PostgreSQL, and no outbound telemetry.
+- Runs as non-root (UID/GID 10001) under Control Plane's restricted container
+  capabilities, no privilege escalation, TLS to PostgreSQL. Signals initiates no
+  outbound telemetry (the workload's egress firewall still governs connectivity).
 - Credentials are held in Control Plane secrets and revealed only to the
   Signals identity via the bundled policy — never baked into the image or
   committed in plaintext.

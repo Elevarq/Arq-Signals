@@ -35,6 +35,8 @@ spec:
           value: {{ .Values.collection.pollInterval | quote }}
         - name: SIGNALS_RETENTION_DAYS
           value: {{ .Values.collection.retentionDays | quote }}
+        - name: SIGNALS_HIGH_SENSITIVITY_COLLECTORS_ENABLED
+          value: {{ .Values.collection.highSensitivityCollectorsEnabled | quote }}
         - name: SIGNALS_METRICS_ENABLED
           value: {{ .Values.metrics.enabled | quote }}
         {{- if .Values.export.onCollect }}

@@ -1,6 +1,6 @@
 apiVersion: v2
 name: signals
-description: Elevarq Signals — lightweight, read-only PostgreSQL diagnostic and telemetry collector. Connects to an existing PostgreSQL you supply, collects statistics with an approved read-only SQL set, and stores portable snapshots locally. No data egress, no AI, no phone-home.
+description: Lightweight, read-only PostgreSQL diagnostic collector that stores portable snapshots locally.
 type: application
 version: 1.0.0
 appVersion: "1.3.0"

@@ -64,9 +64,16 @@ dependencies:
     repository: "oci://ghcr.io/controlplane-com/templates"
 ```
 
-Category vocabulary (observed in the live catalog): `observability`, `database`,
-`security`, `analytics`, `storage`, `search`, `proxy`, `secrets-management`,
-`event-streaming`, `app`, `library`. Signals uses **`observability`**.
+Category vocabulary — **examples** observed in the live catalog (not an
+exhaustive/authoritative list; confirm against current templates before relying
+on one): `observability`, `database`, `security`, `analytics`, `storage`,
+`search`, `proxy`, `secrets-management`, `event-streaming`, `app`, `library`.
+Signals uses **`observability`**.
+
+> `LISTING.md` and this runbook are **internal** artifacts — the upstream catalog
+> has no `LISTING.md` convention and its workflow does not consume one. Keep listing
+> copy here for our own reference; hand it to Control Plane only if they request it
+> during review. Only `<product>/icon.png` + `versions/<semver>/…` is submitted.
 
 ---
 
