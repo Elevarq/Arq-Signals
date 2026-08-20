@@ -1,0 +1,32 @@
+apiVersion: v2
+name: signals
+description: Elevarq Signals — lightweight, read-only PostgreSQL diagnostic and telemetry collector. Connects to an existing PostgreSQL you supply, collects statistics with an approved read-only SQL set, and stores portable snapshots locally. No data egress, no AI, no phone-home.
+type: application
+version: 1.0.0
+appVersion: "1.3.0"
+
+home: https://github.com/Elevarq/signals
+sources:
+  - https://github.com/Elevarq/signals
+maintainers:
+  - name: Elevarq
+    url: https://elevarq.com
+keywords:
+  - postgresql
+  - postgres
+  - observability
+  - diagnostics
+  - telemetry
+  - monitoring
+  - read-only
+
+annotations:
+  created: "2026-08-20"
+  lastModified: "2026-08-20"
+  category: "observability"
+  createsGvc: false
+
+dependencies:
+  - name: cpln-common
+    version: 1.0.0
+    repository: "oci://ghcr.io/controlplane-com/templates"

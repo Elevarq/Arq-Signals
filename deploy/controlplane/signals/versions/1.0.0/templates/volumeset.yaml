@@ -1,0 +1,13 @@
+kind: volumeset
+name: {{ include "signals.volumeset.name" . }}
+gvc: {{ .Values.global.cpln.gvc }}
+description: Persistent store for the Signals SQLite snapshot database (/data)
+tags:
+  {{- include "signals.tags" . | nindent 2 }}
+spec:
+  fileSystemType: ext4
+  initialCapacity: {{ .Values.storage.capacity }}
+  performanceClass: {{ .Values.storage.performanceClass }}
+  snapshots:
+    createFinalSnapshot: true
+    retentionDuration: 7d

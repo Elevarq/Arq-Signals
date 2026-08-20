@@ -1,0 +1,16 @@
+kind: policy
+name: {{ include "signals.policy.name" . }}
+description: Grants the Signals identity reveal access to its secrets
+tags:
+  {{- include "signals.tags" . | nindent 2 }}
+bindings:
+  - permissions:
+      - reveal
+    principalLinks:
+      - //gvc/{{ .Values.global.cpln.gvc }}/identity/{{ include "signals.identity.name" . }}
+targetKind: secret
+targetLinks:
+  - //secret/{{ include "signals.credentials.name" . }}
+  {{- if .Values.postgres.caCert }}
+  - //secret/{{ include "signals.ca.name" . }}
+  {{- end }}
