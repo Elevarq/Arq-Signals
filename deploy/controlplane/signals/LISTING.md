@@ -43,12 +43,13 @@ download snapshots over a token-protected HTTP API.
 
 - An existing PostgreSQL reachable from the GVC.
 - A read-only role: `GRANT pg_monitor TO signals;` + `CONNECT` on the database.
+- A CA bundle for TLS (`verify-full`) — managed PostgreSQL providers publish one.
 - An API bearer token (`openssl rand -base64 32`).
 
 ## Security & privacy
 
 - Non-root (UID/GID 10001), all caps dropped, no privilege escalation.
-- TLS to PostgreSQL (`require`/`verify-ca`/`verify-full`); CA bundle supported.
+- Verified TLS to PostgreSQL (`verify-full`/`verify-ca` with a CA bundle).
 - Credentials held in Control Plane secrets, revealed only to the Signals
   identity — never baked into the image.
 - No outbound data; snapshots stay on the workload volume until you fetch them.
