@@ -3,13 +3,16 @@
 # =============================================================================
 # Signals is a read-only PostgreSQL diagnostic collector. It connects to an
 # existing PostgreSQL database that YOU supply, collects statistics with an
-# approved read-only SQL set, and stores portable ZIP snapshots on a local
-# volume. Signals initiates no telemetry and no automatic upload; snapshots stay
+# approved read-only SQL set, and stores snapshot history in an embedded SQLite
+# database on a local volume; portable `signals-snapshot` ZIP archives are served
+# on demand via the API (optional scheduled drop-to-disk is off by default).
+# Signals initiates no outbound telemetry and no automatic upload; snapshots stay
 # on the workload until you retrieve them. There is no AI in Signals.
 #
 # The values below are PLACEHOLDERS so the chart renders for catalog validation.
 # You MUST override the required inputs (postgres.host/user/password, api.token,
-# postgres.caCert) — the placeholders are intentionally non-functional.
+# postgres.caCert) — the placeholders are intentionally non-functional and
+# fail-closed (the default api.token is rejected by Signals at startup).
 #
 # The image is pinned by immutable digest and is enforced: the chart only deploys
 # the exact reviewed image (ghcr.io/elevarq/signals:1.3.0 multi-arch index —
@@ -58,8 +61,11 @@ api:
   # REQUIRED — bearer token for the API. Must be >= 32 chars with >= 8 distinct
   # characters (enforced by Signals in prod). REPLACE the placeholder; generate:
   #   openssl rand -base64 32
-  # Stored in a Control Plane dictionary secret.
-  token: "REPLACE_WITH_OPENSSL_RAND_BASE64_32BYTES"
+  # The default below is a deliberate fail-closed sentinel: it renders (so catalog
+  # validation passes) but Signals REJECTS it at startup (only 1 distinct char),
+  # so a workload deployed without a real token fails to start rather than exposing
+  # its API under a public, predictable token. Stored in a Control Plane secret.
+  token: "00000000000000000000000000000000"
 
 # ---------------------------------------------------------------------------
 # Collection behaviour.
@@ -114,11 +120,12 @@ storage:
 
 # ---------------------------------------------------------------------------
 # Firewall.
-# Outbound defaults to 0.0.0.0/0 because Signals must reach the PostgreSQL
-# target on its port (typically 5432): Control Plane hostname firewall rules
-# only permit ports 80/443/445, so they cannot scope a 5432 connection, and a
-# CIDR rule needs a stable database IP (managed PostgreSQL IPs often rotate).
-# If your database has a stable address, narrow outboundAllowCIDR to it.
+# Egress is restricted to TCP on the PostgreSQL port (postgres.port) via
+# outboundAllowPort (emitted by the workload template). The destination CIDR
+# defaults to 0.0.0.0/0 because a CIDR rule needs a stable database IP and managed
+# PostgreSQL IPs often rotate (Control Plane hostname rules only permit ports
+# 80/443/445, so they can't scope a 5432 connection). If your database has a
+# stable address, also narrow outboundAllowCIDR to it.
 # Inbound is limited to the same GVC so other workloads can call the Signals API.
 # ---------------------------------------------------------------------------
 firewall:

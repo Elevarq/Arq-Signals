@@ -78,6 +78,31 @@ Validation — fail fast on missing/invalid inputs before any resource renders.
 {{- if not .Values.postgres.caCert -}}
 {{- fail (printf "postgres.caCert (PEM CA bundle) is required for sslMode '%s'. For managed PostgreSQL use the provider bundle (e.g. Amazon RDS: https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem)." .Values.postgres.sslMode) -}}
 {{- end -}}
+{{- /* Boolean-typed values must be real booleans: `--set-string x=false` would
+       otherwise be a truthy non-empty string and silently defeat a safe default. */ -}}
+{{- if not (kindIs "bool" .Values.export.onCollect) -}}
+{{- fail "export.onCollect must be a boolean (true or false, not a quoted string)" -}}
+{{- end -}}
+{{- if not (kindIs "bool" .Values.collection.highSensitivityCollectorsEnabled) -}}
+{{- fail "collection.highSensitivityCollectorsEnabled must be a boolean (true or false, not a quoted string)" -}}
+{{- end -}}
+{{- if not (kindIs "bool" .Values.metrics.enabled) -}}
+{{- fail "metrics.enabled must be a boolean (true or false, not a quoted string)" -}}
+{{- end -}}
+{{- /* Reject weak API tokens. The fail-closed placeholder sentinel is exempt: it
+       renders for catalog validation but Signals rejects it at startup. */ -}}
+{{- $token := .Values.api.token | toString -}}
+{{- $placeholderToken := "00000000000000000000000000000000" -}}
+{{- if and (ne $token $placeholderToken) (lt (len (uniq (splitList "" $token))) 8) -}}
+{{- fail "api.token must contain at least 8 distinct characters (openssl rand -base64 32)" -}}
+{{- end -}}
+{{- $poll := .Values.collection.pollInterval | toString -}}
+{{- if or (not (regexMatch "^([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))+$" $poll)) (not (regexMatch "[1-9]" $poll)) -}}
+{{- fail "collection.pollInterval must be a positive Go duration (e.g. 30s, 5m, 1h)" -}}
+{{- end -}}
+{{- if lt (int .Values.collection.retentionDays) 1 -}}
+{{- fail "collection.retentionDays must be at least 1 (a finite retention window)" -}}
+{{- end -}}
 {{- if and .Values.export.onCollect (not .Values.export.dest) -}}
 {{- fail "export.dest is required when export.onCollect is true (use a path on the persistent volume, e.g. /data/exports)" -}}
 {{- end -}}
