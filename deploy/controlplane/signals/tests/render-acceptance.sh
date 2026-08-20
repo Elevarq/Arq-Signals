@@ -67,7 +67,11 @@ neg R009 "bad performanceClass"     --set storage.performanceClass=nvme
 neg R010 "port out of range"        --set postgres.port=70000
 neg R010 "capacity < 10"            --set storage.capacity=9
 neg R010 "high-throughput + 10GiB"  --set storage.performanceClass=high-throughput-ssd
-neg R011 "export.dest outside /data" --set export.dest=/tmp/exports
+neg R011 "export.dest outside /data" --set export.onCollect=true --set export.dest=/tmp/exports
+
+echo "== positive opt-ins (must render) =="
+if render --set export.onCollect=true >/dev/null 2>&1; then pass "R011 export.onCollect=true renders (default dest under /data)"; else fail "R011 export.onCollect=true failed to render"; fi
+if render --set collection.highSensitivityCollectorsEnabled=true >/dev/null 2>&1; then pass "R006 highSensitivityCollectorsEnabled=true renders"; else fail "R006 highSensitivityCollectorsEnabled=true failed to render"; fi
 
 echo
 if [ "$fails" -eq 0 ]; then echo "ALL PASS"; exit 0; else echo "$fails FAILED"; exit 1; fi

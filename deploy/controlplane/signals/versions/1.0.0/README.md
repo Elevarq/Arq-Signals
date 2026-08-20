@@ -57,11 +57,11 @@ The image is pinned by immutable digest
 | `postgres.sslMode` | `verify-full` | `verify-full` \| `verify-ca` (weaker modes are rejected by Signals in prod) |
 | `collection.pollInterval` | `5m` | Time between collection cycles |
 | `collection.retentionDays` | `30` | Snapshot retention window |
-| `collection.highSensitivityCollectorsEnabled` | `true` | Set `false` to exclude collectors that can capture live query text (`pg_stat_activity`) and object definitions (views/triggers/function bodies) from snapshots |
+| `collection.highSensitivityCollectorsEnabled` | `false` | **Off by default (data minimization).** Set `true` to ALSO capture live query text (`pg_stat_activity`) and object definitions (views/triggers/function bodies) — these can contain literals/PII |
 | `logLevel` | `info` | `debug` \| `info` \| `warn` \| `error` |
 | `metrics.enabled` | `false` | Prometheus `/metrics` (behind the API token) |
-| `export.onCollect` | `true` | Drop one ZIP per database into `export.dest` after each cycle (see Snapshot exports) |
-| `export.dest` | `/data/exports` | Directory for dropped ZIPs — must be on the volume (`/data...`) |
+| `export.onCollect` | `false` | **Off by default.** Snapshots are always retrievable via `GET /export`; set `true` to ALSO drop one ZIP per database into `export.dest` each cycle (see Snapshot exports — files accumulate) |
+| `export.dest` | `/data/exports` | Directory for dropped ZIPs when `export.onCollect=true` — must be on the volume (`/data...`) |
 | `resources.cpu` / `resources.memory` | `100m` / `128Mi` | |
 | `storage.capacity` | `10` | Volume size in GiB (≥ 10; ≥ 200 for `high-throughput-ssd`) |
 | `storage.performanceClass` | `general-purpose-ssd` | `general-purpose-ssd` \| `high-throughput-ssd` |
@@ -80,24 +80,29 @@ The image is pinned by immutable digest
 
 ## Snapshot exports
 
-Snapshots are always available two ways:
+**The default way to get snapshots is the pull API — always on, nothing to
+configure:**
 
-- **Pull (always on):** `GET /export` (bearer) streams a `signals-snapshot.v1` ZIP.
-- **Drop to disk (`export.onCollect`, on by default):** after every collection
-  cycle Signals writes one ZIP per database into `export.dest` (default
-  `/data/exports` on the persistent volume), named
-  `<instance>-t<targetID>-<UTC>.zip`. The directory is created automatically.
+- **Pull (always on, default):** `GET /export` (bearer) streams a
+  `signals-snapshot.v1` ZIP on demand. This is how you retrieve snapshots out of
+  the box.
 
-Retrieving dropped files: list/copy them with
+**Optional — drop to disk (`export.onCollect`, OFF by default):** set
+`export.onCollect=true` to ALSO have Signals write one ZIP per database into
+`export.dest` (default `/data/exports` on the persistent volume) after every
+collection cycle, named `<instance>-t<targetID>-<UTC>.zip`. The directory is
+created automatically. Then retrieve them with
 `cpln workload exec <name> --gvc <gvc> -- ls -la /data/exports`, or run a
 sidecar/second workload that mounts the same volume and syncs the directory to
 object storage.
 
-> **Files accumulate.** Dropped ZIPs are timestamped and never overwritten, and
-> Signals does not prune them (only the SQLite store honours
-> `collection.retentionDays`). Sync them out and delete, or size
-> `storage.capacity` for your cadence and retention. Set `export.onCollect=false`
-> to disable dropping and rely on `GET /export` only.
+> **Why it's off by default — files accumulate.** Dropped ZIPs are timestamped
+> and never overwritten, and Signals does not prune them (only the SQLite store
+> honours `collection.retentionDays`). On the default 5-minute cadence that is
+> hundreds of files per database per day, growing the volume without bound until
+> it fills — which impairs both exports and the SQLite state. Enable
+> `export.onCollect` **only** if you sync the files out and prune them, or size
+> `storage.capacity` for your cadence/retention. Otherwise rely on `GET /export`.
 
 ## Security model
 

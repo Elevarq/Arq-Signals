@@ -1,0 +1,6 @@
+dependencies:
+- name: cpln-common
+  repository: oci://ghcr.io/controlplane-com/templates
+  version: 1.0.0
+digest: sha256:9418c8eb8058a76588e08412241acb39135a055d6e11b90b9a382b03bd061061
+generated: "2026-08-20T14:16:01.909768-07:00"

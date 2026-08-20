@@ -34,11 +34,12 @@ collections and download snapshots over a token-protected HTTP API.
 
 - Read-only collection from PostgreSQL 14–18 (and TimescaleDB), enforced at
   three layers.
-- Portable `signals-snapshot.v1` ZIP exports, on a schedule or on demand.
+- Portable `signals-snapshot.v1` ZIP exports on demand via the API (optional
+  scheduled drop-to-disk).
 - Token-protected HTTP API for status, on-demand collection, and export.
 - Optional Prometheus operational metrics (never collected database data).
-- Single target per deployment; opt-out for collectors that can include query
-  text or stored SQL bodies.
+- Single target per deployment. Collectors that can include query text or stored
+  SQL bodies are off by default (opt-in).
 - No phone-home or automatic export, no AI — snapshots stay local until retrieved.
 
 ## Requirements

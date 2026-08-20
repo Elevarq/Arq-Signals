@@ -67,21 +67,32 @@ api:
 collection:
   pollInterval: "5m"   # time between collection cycles (e.g. 5m, 1h)
   retentionDays: 30    # days of snapshots retained in the local SQLite store
-  # High-sensitivity collectors can capture live query text (pg_stat_activity)
-  # and application object definitions (views, triggers, function bodies) when
-  # the role can read them. Set false to exclude them from snapshots.
-  highSensitivityCollectorsEnabled: true
+  # High-sensitivity collectors — OFF BY DEFAULT (data minimization).
+  # When true, snapshots may include LIVE QUERY TEXT (pg_stat_activity) and stored
+  # SQL bodies (view / trigger / function definitions), which can contain literals
+  # or PII. Leave false to collect statistics/metadata only; set true ONLY if you
+  # deliberately want that content captured in snapshots.
+  highSensitivityCollectorsEnabled: false
 
 # ---------------------------------------------------------------------------
-# Snapshot export. Signals always serves snapshots on demand via GET /export.
-# With onCollect enabled it ALSO drops one ZIP per database into `dest` after
-# every collection cycle (files are timestamped and ACCUMULATE — Signals does
-# not prune them; sync them out and delete, or size storage.capacity for your
-# cadence/retention). `dest` must be on the persistent volume (/data...).
-# The directory is created automatically.
+# Snapshot export.
+# Signals ALWAYS serves snapshots on demand via the API (GET /export, bearer) —
+# that is the primary, always-available way to retrieve them; nothing below is
+# needed for it.
+#
+# onCollect is an OPT-IN extra: when true, Signals ALSO drops one ZIP per database
+# into `dest` after every collection cycle. It is OFF BY DEFAULT because the
+# dropped files are timestamped and ACCUMULATE — Signals does not prune them, so
+# on the default 5-minute cadence they grow the volume without bound and can
+# eventually fill it (impairing both exports and the SQLite state).
+#
+# Enable it ONLY if you have somewhere to send the files (e.g. a sidecar that
+# syncs `dest` to object storage) and you prune them, or you size storage.capacity
+# for your cadence/retention. `dest` must be on the persistent volume (/data...);
+# the directory is created automatically. Native retention is tracked upstream.
 # ---------------------------------------------------------------------------
 export:
-  onCollect: true
+  onCollect: false
   dest: "/data/exports"
 
 # debug | info | warn | error
