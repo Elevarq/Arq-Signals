@@ -1,0 +1,7 @@
+{{- include "signals.validateConfig" . -}}
+kind: identity
+name: {{ include "signals.identity.name" . }}
+description: Elevarq Signals identity for reading its credentials secret
+gvc: {{ .Values.global.cpln.gvc }}
+tags:
+  {{- include "signals.tags" . | nindent 2 }}

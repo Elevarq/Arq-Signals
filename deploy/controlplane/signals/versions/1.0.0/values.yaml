@@ -1,0 +1,95 @@
+# =============================================================================
+# Elevarq Signals — Control Plane Catalog template values
+# =============================================================================
+# Signals is a read-only PostgreSQL diagnostic collector. It connects to an
+# existing PostgreSQL database that YOU supply, collects statistics with an
+# approved read-only SQL set, and stores portable ZIP snapshots on a local
+# volume. No data leaves the workload; there is no AI and no phone-home.
+#
+# Image is pinned by digest for supply-chain integrity. The digest below is the
+# multi-arch index for ghcr.io/elevarq/signals:1.3.0 (linux/amd64 + linux/arm64,
+# cosign-signed with an attached SPDX SBOM).
+image:
+  repository: ghcr.io/elevarq/signals
+  tag: "1.3.0"
+  # Immutable digest of the :1.3.0 multi-arch index. When set, the workload
+  # references repository@digest and `tag` is informational only.
+  digest: "sha256:76aeda85f41ee716797535824c62dee72b5524d98267deacf589983b9a6feadc"
+
+# ---------------------------------------------------------------------------
+# Resource sizing (Signals is lightweight — a Go binary + embedded SQLite).
+# ---------------------------------------------------------------------------
+resources:
+  cpu: 100m       # request/reservation; Signals idles well under this
+  memory: 128Mi   # covers the default 4 concurrent targets + export buffering
+
+# ---------------------------------------------------------------------------
+# PostgreSQL target — the customer's EXISTING database (nothing is bundled).
+# Signals needs only a read-only role (e.g. `GRANT pg_monitor TO signals`).
+# ---------------------------------------------------------------------------
+postgres:
+  name: "default"        # logical target name shown in snapshots
+  host: ""               # REQUIRED — PostgreSQL hostname or IP reachable from the GVC
+  port: 5432
+  database: "postgres"   # database to connect to
+  user: ""               # REQUIRED — read-only role (see README: minimum grants)
+  password: ""           # REQUIRED — stored in a Control Plane dictionary secret
+  # TLS to PostgreSQL. Recommended: require (default) or verify-full.
+  # One of: disable | prefer | require | verify-ca | verify-full
+  # `disable` / `prefer` are rejected because the workload runs with SIGNALS_ENV=prod.
+  sslMode: "require"
+  # PEM CA bundle — REQUIRED only for sslMode verify-ca / verify-full.
+  # Stored in a Control Plane opaque secret and mounted read-only into the workload.
+  caCert: ""
+
+# ---------------------------------------------------------------------------
+# Signals HTTP API (bearer-token protected; used to trigger collection and
+# download snapshot exports). Reachable in-GVC at
+# signals.<gvc>.cpln.local:8081 by default (see firewall.internal).
+# ---------------------------------------------------------------------------
+api:
+  # REQUIRED — bearer token for the API. Must be >= 32 chars with >= 8 distinct
+  # characters (enforced by Signals in prod). Generate with:
+  #   openssl rand -base64 32
+  # Stored in a Control Plane dictionary secret.
+  token: ""
+
+# ---------------------------------------------------------------------------
+# Collection behaviour.
+# ---------------------------------------------------------------------------
+collection:
+  pollInterval: "5m"   # time between collection cycles (e.g. 5m, 1h)
+  retentionDays: 30    # days of snapshots retained in the local SQLite store
+
+# debug | info | warn | error
+logLevel: "info"
+
+# Prometheus /metrics endpoint (operational metrics only — never collected DB
+# data). Served on the API port behind the same bearer token when enabled.
+metrics:
+  enabled: false
+
+# ---------------------------------------------------------------------------
+# Local persistence for the snapshot store (SQLite at /data/signals.db).
+# Control Plane volumesets have a 10 GiB minimum; Signals' footprint is small.
+# ---------------------------------------------------------------------------
+storage:
+  capacity: 10                          # GiB
+  performanceClass: general-purpose-ssd # general-purpose-ssd | high-throughput-ssd
+
+# ---------------------------------------------------------------------------
+# Firewall. Outbound is required to reach the PostgreSQL target; inbound is
+# limited to the same GVC so other workloads can call the Signals API.
+# ---------------------------------------------------------------------------
+firewall:
+  internal:
+    inboundAllowType: same-gvc   # none | same-gvc | same-org | workload-list
+    workloads: []
+  external:
+    outboundAllowCIDR:
+      - 0.0.0.0/0                # narrow to the database CIDR in production
+
+# Injected by the platform when createsGvc is false.
+global:
+  cpln:
+    gvc: ""

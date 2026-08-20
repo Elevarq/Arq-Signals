@@ -1,0 +1,117 @@
+{{- include "signals.validateConfig" . -}}
+kind: workload
+name: {{ include "signals.name" . }}
+gvc: {{ .Values.global.cpln.gvc }}
+description: Elevarq Signals — read-only PostgreSQL diagnostic collector
+tags:
+  {{- include "signals.tags" . | nindent 2 }}
+spec:
+  # Stateful: Signals keeps its snapshot history in an embedded SQLite store on
+  # a persistent volume, and runs as a single instance.
+  type: stateful
+  identityLink: //identity/{{ include "signals.identity.name" . }}
+  containers:
+    - name: signals
+      image: {{ include "signals.image" . }}
+      inheritEnv: false
+      cpu: {{ .Values.resources.cpu | quote }}
+      memory: {{ .Values.resources.memory | quote }}
+      ports:
+        - number: 8081
+          protocol: http
+      env:
+        # --- Daemon ---
+        - name: SIGNALS_ENV
+          value: prod
+        - name: SIGNALS_LISTEN_ADDR
+          value: "0.0.0.0:8081"
+        - name: SIGNALS_LOG_LEVEL
+          value: {{ .Values.logLevel | quote }}
+        - name: SIGNALS_LOG_JSON
+          value: "true"
+        - name: SIGNALS_DB_PATH
+          value: /data/signals.db
+        - name: SIGNALS_POLL_INTERVAL
+          value: {{ .Values.collection.pollInterval | quote }}
+        - name: SIGNALS_RETENTION_DAYS
+          value: {{ .Values.collection.retentionDays | quote }}
+        - name: SIGNALS_METRICS_ENABLED
+          value: {{ .Values.metrics.enabled | quote }}
+        # --- PostgreSQL target (customer-supplied external database) ---
+        - name: SIGNALS_TARGET_NAME
+          value: {{ .Values.postgres.name | default "default" | quote }}
+        - name: SIGNALS_TARGET_HOST
+          value: {{ .Values.postgres.host | quote }}
+        - name: SIGNALS_TARGET_PORT
+          value: {{ .Values.postgres.port | quote }}
+        - name: SIGNALS_TARGET_DBNAME
+          value: {{ .Values.postgres.database | quote }}
+        - name: SIGNALS_TARGET_USER
+          value: {{ .Values.postgres.user | quote }}
+        - name: SIGNALS_TARGET_SSLMODE
+          value: {{ .Values.postgres.sslMode | quote }}
+        {{- if .Values.postgres.caCert }}
+        - name: SIGNALS_TARGET_SSLROOTCERT_FILE
+          value: /etc/signals/certs/ca.pem
+        {{- end }}
+        # Password via env-var indirection: Signals reads the env var named by
+        # SIGNALS_TARGET_PASSWORD_ENV, whose value is injected from the secret.
+        - name: SIGNALS_TARGET_PASSWORD_ENV
+          value: PG_TARGET_PASSWORD
+        - name: PG_TARGET_PASSWORD
+          value: 'cpln://secret/{{ include "signals.credentials.name" . }}.pg-password'
+        # API bearer token (same dictionary secret)
+        - name: SIGNALS_API_TOKEN
+          value: 'cpln://secret/{{ include "signals.credentials.name" . }}.api-token'
+      volumes:
+        - path: /data
+          uri: cpln://volumeset/{{ include "signals.volumeset.name" . }}
+        {{- if .Values.postgres.caCert }}
+        - path: /etc/signals/certs/ca.pem
+          recoveryPolicy: retain
+          uri: cpln://secret/{{ include "signals.ca.name" . }}.payload
+        {{- end }}
+      # /health is unauthenticated and returns 200 once the HTTP server is up.
+      readinessProbe:
+        httpGet:
+          path: /health
+          port: 8081
+          scheme: HTTP
+        failureThreshold: 3
+        initialDelaySeconds: 5
+        periodSeconds: 10
+        successThreshold: 1
+        timeoutSeconds: 5
+      livenessProbe:
+        httpGet:
+          path: /health
+          port: 8081
+          scheme: HTTP
+        failureThreshold: 3
+        initialDelaySeconds: 15
+        periodSeconds: 30
+        successThreshold: 1
+        timeoutSeconds: 5
+  defaultOptions:
+    # Single instance: snapshot history + circuit-breaker state are per-replica.
+    autoscaling:
+      metric: disabled
+      minScale: 1
+      maxScale: 1
+    capacityAI: false
+    debug: false
+    suspend: false
+    timeoutSeconds: 60
+  # Signals runs as UID/GID 10001; make the mounted volume group-writable by it.
+  securityOptions:
+    filesystemGroupId: 10001
+  firewallConfig:
+    external:
+      outboundAllowCIDR:
+        {{- toYaml .Values.firewall.external.outboundAllowCIDR | nindent 8 }}
+    internal:
+      inboundAllowType: {{ .Values.firewall.internal.inboundAllowType }}
+      {{- if .Values.firewall.internal.workloads }}
+      inboundAllowWorkload:
+        {{- toYaml .Values.firewall.internal.workloads | nindent 8 }}
+      {{- end }}
