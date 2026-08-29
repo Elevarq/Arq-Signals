@@ -1126,7 +1126,7 @@ func (d *DB) DeleteQueryRunsOlderThanByClass(class, before string) (int64, error
 // of *successful* collection. A skipped or failed run that bumped the
 // timestamp would defer the next legitimate attempt by a full cadence
 // window, masking transient failures and gating misconfigurations
-// behind invisible delays. Codex post-0.3.1 H-003.
+// behind invisible delays. post-0.3.1 H-003.
 //
 // Legacy fallback: pre-status-column rows where status is empty are
 // counted only when error is empty too — preserves cadence behaviour

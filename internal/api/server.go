@@ -171,7 +171,7 @@ func handleHealth(deps *Deps) http.HandlerFunc {
 
 func handleStatus(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Codex post-0.3.1 M-002: surface DB read failures as 500
+		// post-0.3.1 M-002: surface DB read failures as 500
 		// instead of swallowing them with `_`. A silent fallback to
 		// "0 snapshots / 0 targets" makes a wedged SQLite look like
 		// a healthy empty system.
@@ -302,7 +302,7 @@ var reasonPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 // payload is three short fields (targets array, request_id ≤32 chars,
 // reason ≤64 chars) — even a few hundred targets stays well under
 // 64 KiB. Bigger requests are either malformed or hostile; reject
-// before allocating. Codex post-0.3.1 L-001.
+// before allocating. post-0.3.1 L-001.
 const collectNowMaxBodyBytes = 64 * 1024
 
 func handleCollectNow(deps *Deps) http.HandlerFunc {
@@ -537,7 +537,7 @@ func handleCollectNow(deps *Deps) http.HandlerFunc {
 
 // exportRejectInvalidTime emits the standard export_completed audit
 // + metrics records for an RFC3339 parse failure on since/until and
-// writes a 400 response. Codex post-0.3.1 M-003.
+// writes a 400 response. post-0.3.1 M-003.
 func exportRejectInvalidTime(w http.ResponseWriter, deps *Deps, actor string, start time.Time, field, value string) {
 	safety.AuditLog("export_completed",
 		"actor", actor,
@@ -622,7 +622,7 @@ func handleExport(deps *Deps) http.HandlerFunc {
 			opts.TargetID = id
 		}
 
-		// Codex post-0.3.1 M-003: validate since/until as RFC3339 and
+		// post-0.3.1 M-003: validate since/until as RFC3339 and
 		// reject inverted ranges. Without this the strings flow
 		// straight into SQLite as text comparisons; a typo silently
 		// returns an empty export and the client thinks the time
@@ -860,7 +860,7 @@ func (l *tokenRateLimiter) recordSuccess(ip string) {
 }
 
 // recoveryMiddleware catches panics and returns 500 with a JSON
-// body. Codex post-0.3.1 L-002: previously used http.Error which
+// body. post-0.3.1 L-002: previously used http.Error which
 // sets Content-Type: text/plain even when the body content is JSON,
 // breaking clients that branch on the response Content-Type.
 func recoveryMiddleware(next http.Handler) http.Handler {

@@ -6,6 +6,14 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- Neutralized historical AI-tool-name references ("Codex") in committed
+  artifacts per the no-AI-attribution engineering standard (#392): renamed
+  `tests/signals_codex_post_031_test.go` -> `tests/signals_post_031_test.go`
+  and rewrote the `Codex post-0.3.1 <id>` review-finding comments to
+  `post-0.3.1 <id>` across the tree. No behaviour change; no git-history
+  rewrite.
+
 ### Added
 
 - Startup warning when an enabled target's connect host is **non-canonical** —
@@ -1516,7 +1524,7 @@ Twelve findings from the post-0.4.0 review pass:
 
 ## [0.3.2] - 2026-04-25
 
-Hardening release addressing the post-0.3.1 Codex review. Thirteen
+Hardening release addressing the post-0.3.1 review. Thirteen
 findings closed across collection safety, export integrity, API
 error handling, and supply-chain hygiene. No breaking changes.
 
@@ -1569,7 +1577,7 @@ under failure conditions.
   `gitleaks_<version>_checksums.txt` file before extraction.
 
 ### Tests
-- 19 new tests in `tests/signals_codex_post_031_test.go` covering
+- 19 new tests in `tests/signals_post_031_test.go` covering
   every fix above, plus an updated `TestCollectNowLargeBody` for the
   413 contract.
 
@@ -1580,7 +1588,7 @@ under failure conditions.
   reject previously undefined/invalid input.
 - Docker base image digest pinning remains deferred — `golang:1.25-alpine`
   and `alpine:3.21` continue to be tag-pinned. The remaining half of
-  L-003 from the Codex review is scheduled for a follow-up that
+  L-003 from the review is scheduled for a follow-up that
   updates the Dockerfile, Trivy baseline, and release-verification
   doc together.
 - R080 (per-collector export view) is not included in this release.

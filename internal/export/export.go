@@ -503,7 +503,7 @@ func (b *Builder) writeCollectorStatus(zw *zip.Writer, opts Options, scope *expo
 	}
 
 	// Unscoped export with no caller-supplied status: synthesise from
-	// the scoped runs (Codex post-0.3.1 H-002, refreshed for
+	// the scoped runs (post-0.3.1 H-002, refreshed for
 	// R084/R085). The legacy behaviour was to write an empty
 	// collectors[] array even when matching query runs existed, which
 	// made auditors believe nothing had been collected. Synthesising
@@ -690,7 +690,7 @@ func (b *Builder) writeQueryResults(zw *zip.Writer, scope *exportScope) error {
 		// A successful run that has no result payload is a data
 		// integrity failure: InsertCollectionAtomic guarantees the
 		// pair lands together, so a missing partner means the row
-		// was deleted out of band or the storage corrupted. Codex
+		// was deleted out of band or the storage corrupted.
 		// post-0.3.1 M-001 — fail the export instead of silently
 		// dropping the row, otherwise audits believe collection
 		// produced no data when it actually did.
