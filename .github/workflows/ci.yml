@@ -41,6 +41,9 @@ jobs:
       - name: Docs drift guard
         run: bash scripts/preflight.sh docs
 
+      - name: de-arq guard (#398)
+        run: bash scripts/preflight.sh no-legacy-arq
+
       - name: AMI Image Builder component guard
         run: bash scripts/preflight.sh imagebuilder
 

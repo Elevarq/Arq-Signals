@@ -124,6 +124,20 @@ run_docs() {
   log_ok "docs: clean"
 }
 
+# de-arq guard (Elevarq/Analyzer#2568 replication, #398): baseline ratchet
+# that blocks NEW legacy-arq naming while the rename debt is burned down.
+# Fails if any file's legacy-arq count exceeds the committed baseline or a
+# new file appears. (Wording uses the hyphenated "legacy-arq" form on
+# purpose — the guard excludes it, so this file stays at baseline.)
+run_no_legacy_arq() {
+  log_step "de-arq guard (no new legacy-arq)"
+  if ! bash "${SCRIPT_DIR}/check-no-legacy-arq.sh"; then
+    log_fail "de-arq guard: new legacy-arq introduced beyond the baseline"
+    return 1
+  fi
+  log_ok "de-arq guard: no new legacy-arq beyond the baseline"
+}
+
 # #266: static guard for the demand-gated AMI / EC2 Image Builder groundwork
 # (specifications/marketplace-ami-image-builder.md, TC-AMI-01..04). Dependency
 # -light and runs no AWS call, so it sits with the fast gates.
@@ -276,6 +290,7 @@ run_all() {
   run_build
   run_test
   run_docs
+  run_no_legacy_arq
   run_imagebuilder
   run_security
   echo ""
@@ -292,6 +307,7 @@ case "${1:-all}" in
   build)    run_build ;;
   test)     run_test ;;
   docs)     run_docs ;;
+  no-legacy-arq) run_no_legacy_arq ;;
   imagebuilder) run_imagebuilder ;;
   secrets)  run_secrets ;;
   vuln)     run_vuln ;;
