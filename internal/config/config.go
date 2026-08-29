@@ -701,7 +701,7 @@ func ValidateStrict(cfg Config) (warnings []string, err error) {
 			cfg.Signals.MinSnapshotInterval,
 		))
 	}
-	// Codex post-0.3.1 M-004: any non-positive RetentionDays disables
+	// post-0.3.1 M-004: any non-positive RetentionDays disables
 	// cleanup (cleanup() returns immediately). It's a warning, not a
 	// hard error — operators sometimes legitimately want indefinite
 	// retention pinned at the daemon and rely on external pruning.
@@ -803,7 +803,7 @@ func ValidateStrict(cfg Config) (warnings []string, err error) {
 		if secretCount > 1 {
 			hard = append(hard, fmt.Sprintf("target[%d] (%s): specify at most one of password_file, password_env, pgpass_file", i, t.Name))
 		}
-		// Codex post-0.3.1 M-006: reject sslmode values outside the
+		// post-0.3.1 M-006: reject sslmode values outside the
 		// libpq enum. Empty is allowed — libpq applies its default.
 		if t.SSLMode != "" && !validSSLModes[t.SSLMode] {
 			hard = append(hard, fmt.Sprintf("target[%d] (%s): sslmode %q is not a valid libpq value; use disable, allow, prefer, require, verify-ca, or verify-full", i, t.Name, t.SSLMode))
@@ -916,7 +916,7 @@ func ValidateStrict(cfg Config) (warnings []string, err error) {
 		warnings = append(warnings, fmt.Sprintf("signals.poll_interval is very short (%s); minimum recommended is 30s", cfg.Signals.PollInterval))
 	}
 	if cfg.Signals.RetentionDays <= 0 {
-		// Codex post-0.3.1 M-004: align warning text with the
+		// post-0.3.1 M-004: align warning text with the
 		// implementation. cleanup() returns immediately when
 		// RetentionDays <= 0, i.e. snapshots and query_runs are
 		// retained forever — the previous warning falsely claimed
@@ -1079,7 +1079,7 @@ func Validate(cfg Config) []string {
 // validSSLModes is the canonical libpq enum. Any other value is a
 // hard configuration error — silently accepting unknown strings would
 // pass through to libpq and trigger an opaque connect-time failure
-// per target. Codex post-0.3.1 M-006.
+// per target. post-0.3.1 M-006.
 var validSSLModes = map[string]bool{
 	"disable":     true,
 	"allow":       true,

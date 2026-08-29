@@ -1119,7 +1119,7 @@ func (c *Collector) collectTarget(ctx context.Context, tgt config.TargetConfig, 
 	// realistic causes are permission revocation on the GUC, an aborted
 	// transaction state, or a dropped connection mid-statement) the
 	// safety contract is broken and we must not run diagnostic queries.
-	// Codex post-0.3.1 H-004.
+	// post-0.3.1 H-004.
 	stmtTimeoutMs := int(c.queryTimeout.Milliseconds())
 	lockTimeoutMs := 5000 // 5 seconds — conservative default
 	idleTimeoutMs := int(c.targetTimeout.Milliseconds())
@@ -1243,7 +1243,7 @@ func (c *Collector) collectTarget(ctx context.Context, tgt config.TargetConfig, 
 
 		// Use a savepoint so a single query failure does not abort
 		// the entire READ ONLY transaction (PostgreSQL marks the
-		// transaction as aborted after any error). Codex post-0.3.1
+		// transaction as aborted after any error). post-0.3.1
 		// M-005: every savepoint operation's error is now checked.
 		// SAVEPOINT failure is fatal — without it the per-query
 		// recovery contract is broken and a downstream failure would

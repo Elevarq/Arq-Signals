@@ -30,7 +30,7 @@ import (
 // filtering or query execution), avoiding the need for a live PG 13
 // database in CI.
 //
-// Codex post-0.3.1 review: H-001
+// post-0.3.1 review: H-001
 func TestCollectTargetRejectsPostgresBelowMinSupportedMajor(t *testing.T) {
 	root := repoRoot(t)
 	src := readFileString(t, filepath.Join(root, "internal", "collector", "collector.go"))
@@ -63,7 +63,7 @@ func TestCollectTargetRejectsPostgresBelowMinSupportedMajor(t *testing.T) {
 // rejection so operators can grep for it without being conflated
 // with safety_check or generic internal errors.
 //
-// Codex post-0.3.1 review: H-001
+// post-0.3.1 review: H-001
 func TestVersionUnsupportedClassifiedSeparately(t *testing.T) {
 	root := repoRoot(t)
 	src := readFileString(t, filepath.Join(root, "internal", "collector", "collector.go"))
@@ -85,7 +85,7 @@ func TestVersionUnsupportedClassifiedSeparately(t *testing.T) {
 // failure against a live PostgreSQL needs an attacker-shaped test
 // fixture that adds no value over the source check.
 //
-// Codex post-0.3.1 review: H-004
+// post-0.3.1 review: H-004
 func TestSetLocalTimeoutFailureAbortsCollection(t *testing.T) {
 	root := repoRoot(t)
 	src := readFileString(t, filepath.Join(root, "internal", "collector", "collector.go"))
@@ -119,7 +119,7 @@ func TestSetLocalTimeoutFailureAbortsCollection(t *testing.T) {
 // failure would silently break the per-query recovery contract and a
 // downstream failure could poison the whole cycle.
 //
-// Codex post-0.3.1 review: M-005
+// post-0.3.1 review: M-005
 func TestSavepointErrorsHandled(t *testing.T) {
 	root := repoRoot(t)
 	src := readFileString(t, filepath.Join(root, "internal", "collector", "collector.go"))
@@ -171,7 +171,7 @@ func TestSavepointErrorsHandled(t *testing.T) {
 // The collector loop persists the returned IDs as skipped query_runs
 // so collector_status.json never silently drops these collectors.
 //
-// Codex post-0.3.1 review: H-002
+// post-0.3.1 review: H-002
 func TestSkippedRunsPersistedForVersionUnsupportedCollectors(t *testing.T) {
 	// Pick a major that sits well below the registered MinPGVersion
 	// values used by version-gated collectors (e.g. PG 17 stat
@@ -208,7 +208,7 @@ func TestSkippedRunsPersistedForVersionUnsupportedCollectors(t *testing.T) {
 // extension-missing bucket is exposed by GatedIDsByReason for at least
 // one registered collector so the persistence loop has work to do.
 //
-// Codex post-0.3.1 review: H-002
+// post-0.3.1 review: H-002
 func TestSkippedRunsPersistedForMissingExtensionCollectors(t *testing.T) {
 	// No extensions present. Any collector that requires an extension
 	// must surface here.
@@ -230,7 +230,7 @@ func TestSkippedRunsPersistedForMissingExtensionCollectors(t *testing.T) {
 // window, hiding transient failures and configuration gates behind
 // invisible delays.
 //
-// Codex post-0.3.1 review: H-003
+// post-0.3.1 review: H-003
 func TestGetLastRunTimesIgnoresSkippedAndFailedRuns(t *testing.T) {
 	store := openTestDB(t)
 	tid, err := store.UpsertTarget("t1", "h", 5432, "db", "u", "disable", "NONE", "", true)
@@ -290,7 +290,7 @@ func TestGetLastRunTimesIgnoresSkippedAndFailedRuns(t *testing.T) {
 // invalid string passes straight through to libpq and surfaces as an
 // opaque connect-time error per target rather than at startup.
 //
-// Codex post-0.3.1 review: M-006
+// post-0.3.1 review: M-006
 func TestValidateStrictRejectsInvalidSSLMode(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Targets = []config.TargetConfig{{
@@ -311,7 +311,7 @@ func TestValidateStrictRejectsInvalidSSLMode(t *testing.T) {
 // still rejects everything weaker than verify-ca / verify-full and
 // treats `require` as weak (no server-identity verification).
 //
-// Codex post-0.3.1 review: M-006
+// post-0.3.1 review: M-006
 func TestValidateProdTLSRejectsWeakSSLMode(t *testing.T) {
 	for _, mode := range []string{"disable", "allow", "prefer", "require"} {
 		t.Run(mode, func(t *testing.T) {
@@ -331,13 +331,13 @@ func TestValidateProdTLSRejectsWeakSSLMode(t *testing.T) {
 // TestRetentionDaysZeroMatchesDocumentedBehavior verifies the
 // retention_days <= 0 warning text matches the actual cleanup
 // behaviour: cleanup() returns immediately, snapshots are kept
-// indefinitely. Codex post-0.3.1 review found the previous warning
+// indefinitely. post-0.3.1 review found the previous warning
 // said the next cycle would delete them — the opposite of what
 // happens — which would mislead operators into thinking they had
 // configured an aggressive purge when they had in fact disabled
 // cleanup entirely.
 //
-// Codex post-0.3.1 review: M-004
+// post-0.3.1 review: M-004
 func TestRetentionDaysZeroMatchesDocumentedBehavior(t *testing.T) {
 	cases := []int{0, -1}
 	for _, days := range cases {
@@ -375,7 +375,7 @@ func TestRetentionDaysZeroMatchesDocumentedBehavior(t *testing.T) {
 
 // TestGitleaksInstallVerifiesChecksum verifies CI and release
 // workflows download gitleaks with checksum verification rather than
-// piping curl into tar. Codex post-0.3.1 review: L-003.
+// piping curl into tar. post-0.3.1 review: L-003.
 func TestGitleaksInstallVerifiesChecksum(t *testing.T) {
 	root := repoRoot(t)
 	for _, rel := range []string{".github/workflows/ci.yml", ".github/workflows/release.yml"} {
@@ -398,7 +398,7 @@ func TestGitleaksInstallVerifiesChecksum(t *testing.T) {
 // when a downstream handler panics. The previous implementation used
 // http.Error which sets text/plain — clients that switch on the
 // response Content-Type would treat the panic body as a non-JSON
-// error and break their parser. Codex post-0.3.1 review: L-002.
+// error and break their parser. post-0.3.1 review: L-002.
 //
 // Asserted via source structure plus a behaviour check by source
 // inspection — recoveryMiddleware is unexported.
@@ -429,7 +429,7 @@ func TestPanicRecoveryReturnsJSON(t *testing.T) {
 // TestCollectNowRejectsOversizedBody verifies the /collect/now
 // handler refuses request bodies larger than the configured cap and
 // returns HTTP 413 instead of buffering the entire payload before
-// rejecting it. Codex post-0.3.1 review: L-001.
+// rejecting it. post-0.3.1 review: L-001.
 func TestCollectNowRejectsOversizedBody(t *testing.T) {
 	handler, cleanup := makeTestHandler(t)
 	defer cleanup()
@@ -463,7 +463,7 @@ func TestCollectNowRejectsOversizedBody(t *testing.T) {
 // We exercise the failure by closing the DB before issuing the
 // request — every subsequent SQL query returns "database is closed".
 //
-// Codex post-0.3.1 review: M-002
+// post-0.3.1 review: M-002
 func TestStatusReturns500OnDatabaseError(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "status-error.db")
@@ -510,7 +510,7 @@ func TestStatusReturns500OnDatabaseError(t *testing.T) {
 // non-RFC3339 since/until values with HTTP 400 instead of passing
 // the strings through to SQLite where they silently match nothing.
 //
-// Codex post-0.3.1 review: M-003
+// post-0.3.1 review: M-003
 func TestExportRejectsInvalidSinceUntil(t *testing.T) {
 	handler, cleanup := makeTestHandler(t)
 	defer cleanup()
@@ -544,7 +544,7 @@ func TestExportRejectsInvalidSinceUntil(t *testing.T) {
 
 // TestExportRejectsSinceAfterUntil verifies inverted ranges return 400.
 //
-// Codex post-0.3.1 review: M-003
+// post-0.3.1 review: M-003
 func TestExportRejectsSinceAfterUntil(t *testing.T) {
 	handler, cleanup := makeTestHandler(t)
 	defer cleanup()
@@ -572,7 +572,7 @@ func TestExportRejectsSinceAfterUntil(t *testing.T) {
 // together, so a missing partner indicates out-of-band deletion or
 // corruption — the export must surface that.
 //
-// Codex post-0.3.1 review: M-001
+// post-0.3.1 review: M-001
 func TestExportFailsWhenSuccessfulRunHasMissingResult(t *testing.T) {
 	store := openTestDB(t)
 	tid, err := store.UpsertTarget("t1", "h", 5432, "db", "u", "disable", "NONE", "", true)
@@ -615,7 +615,7 @@ func TestExportFailsWhenSuccessfulRunHasMissingResult(t *testing.T) {
 // condition; it means the stored bytes do not match the schema and
 // downstream consumers must be alerted.
 //
-// Codex post-0.3.1 review: M-001
+// post-0.3.1 review: M-001
 func TestExportFailsWhenSuccessfulRunResultCannotDecode(t *testing.T) {
 	store := openTestDB(t)
 	tid, err := store.UpsertTarget("t1", "h", 5432, "db", "u", "disable", "NONE", "", true)
@@ -667,7 +667,7 @@ func TestExportFailsWhenSuccessfulRunResultCannotDecode(t *testing.T) {
 // runs); the synthesis behaviour we're proving is identical for
 // skipped vs. successful inputs.
 //
-// Codex post-0.3.1 review: H-002
+// post-0.3.1 review: H-002
 func TestUnscopedExportCollectorStatusSynthesizedFromRuns(t *testing.T) {
 	store := openTestDB(t)
 

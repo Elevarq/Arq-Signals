@@ -1,4 +1,4 @@
-// Tests for issue #16 (Codex Beta review polish):
+// Tests for issue #16 (review polish):
 //   - /status.target_count must reflect only enabled targets.
 //   - collector.Reload must propagate a ReconcileEnabledTargets error
 //     so a /reload or SIGHUP that can't update DB enablement is reported,

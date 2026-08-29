@@ -86,10 +86,10 @@ func TestCollectNowJSONNullAndEmpty(t *testing.T) {
 
 // TestCollectNowLargeBody verifies the daemon refuses oversize
 // request bodies with HTTP 413 instead of buffering them into memory.
-// Codex post-0.3.1 L-001 added http.MaxBytesReader at the handler
+// post-0.3.1 L-001 added http.MaxBytesReader at the handler
 // entry point with a 64 KiB cap; anything larger is rejected before
 // JSON parsing.
-// Traces: SIGNALS-R082 / stabilization / Codex L-001
+// Traces: SIGNALS-R082 / stabilization / L-001
 func TestCollectNowLargeBody(t *testing.T) {
 	handler, cleanup := makeTargetTestHandler(t, twoTargets())
 	defer cleanup()
