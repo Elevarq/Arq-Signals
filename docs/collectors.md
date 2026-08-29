@@ -69,6 +69,7 @@ down a PostgreSQL server.
 | `replication_status_v1` | `pg_stat_replication` | 5m | Replica lag and sync state (empty when standalone) |
 | `pg_stat_replication_slots_v1` | `pg_stat_replication_slots` | 5m | Logical slot spill/stream/total counters (PG 14+, empty when no logical slots) |
 | `checkpointer_stats_v1` | `pg_stat_checkpointer` | 15m | Checkpoint stats (PG 17+ only, complements bgwriter) |
+| `wal_archiving_v1` | `pg_stat_archiver` + archive/recovery `pg_settings` | 15m | WAL-archiving progress/failures + recovery posture (archive_mode, wal_level, archive/restore command presence — never the command string) |
 | `vacuum_health_v1` | `pg_stat_user_tables` + `pg_class` | 15m | Dead tuple pressure, overdue vacuum, XID freeze age |
 | `idle_in_txn_offenders_v1` | `pg_stat_activity` | 5m | Idle-in-transaction backends holding locks |
 | `database_sizes_v1` | `pg_database` | 1h | All database sizes for growth monitoring |

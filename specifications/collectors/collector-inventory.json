@@ -397,6 +397,10 @@
       "name": "vacuum_health_v1"
     },
     {
+      "category": "server",
+      "name": "wal_archiving_v1"
+    },
+    {
       "category": "wraparound",
       "name": "wraparound_blockers_v1"
     },
