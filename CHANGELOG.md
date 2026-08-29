@@ -7,6 +7,16 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- Scheduled directory-push: the **destination is the switch** (#403). Setting
+  `export_dest` / `SIGNALS_EXPORT_DEST` now enables the per-cycle push on its
+  own; `export_on_collect` becomes an explicit opt-OUT (`false` suppresses the
+  push while keeping a dest configured). Pull via `GET /export` remains the
+  default when no destination is set. On enable, Signals now writes the current
+  latest snapshot per database **immediately** (no up-to-one-poll-interval blind
+  window); semantics stay latest-per-target, not a backlog replay. The push
+  path + the #385 retention knobs are now documented in the adoption guide.
+
+### Changed
 - Neutralized historical AI-tool-name references ("Codex") in committed
   artifacts per the no-AI-attribution engineering standard (#392): renamed
   `tests/signals_codex_post_031_test.go` -> `tests/signals_post_031_test.go`

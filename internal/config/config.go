@@ -69,12 +69,15 @@ type SignalsConfig struct {
 	// `per-collector/<query_id>.json` directory to the export ZIP.
 	// Default off — canonical NDJSON layout is unaffected.
 	ExportPerCollectorFiles bool `yaml:"export_per_collector_files"`
-	// #350: scheduled auto-export. When ExportOnCollect is true and
-	// ExportDest is a non-empty directory, Signals writes the latest
-	// snapshot export ZIP to ExportDest after each collection cycle. Both
-	// default off (no scheduled export). What consumes the files is out of
-	// scope for Signals.
-	ExportOnCollect bool   `yaml:"export_on_collect"`
+	// #350/#403: scheduled auto-export to a directory. The DESTINATION is the
+	// switch — when ExportDest is a non-empty directory, Signals writes the
+	// latest snapshot export ZIP per database to it after each collection cycle
+	// (and once immediately on enable). No ExportDest ⇒ pull-only via
+	// GET /export, the shipped default. ExportOnCollect is an explicit
+	// opt-OUT: nil (unset) or true keeps the push on when a dest is set; false
+	// suppresses it even with a dest configured. See ScheduledExportEnabled.
+	// What consumes the files is out of scope for Signals.
+	ExportOnCollect *bool  `yaml:"export_on_collect"`
 	ExportDest      string `yaml:"export_dest"`
 	// #385: bound the scheduled-export directory so it does not grow without
 	// limit (one ZIP per database per cycle, ~288/db/day at a 5m cadence).
@@ -84,6 +87,17 @@ type SignalsConfig struct {
 	// behaviour), so existing deployments are unaffected until they opt in.
 	ExportRetentionDays int `yaml:"export_retention_days"`
 	ExportMaxFiles      int `yaml:"export_max_files"`
+}
+
+// ScheduledExportEnabled reports whether the scheduled directory-push is on
+// (#403). The destination is the switch: a non-empty ExportDest enables the
+// push, unless ExportOnCollect is explicitly false (the opt-out). Unset (nil)
+// or true keeps it on. No destination ⇒ pull-only via GET /export (default).
+func (s SignalsConfig) ScheduledExportEnabled() bool {
+	if s.ExportDest == "" {
+		return false
+	}
+	return s.ExportOnCollect == nil || *s.ExportOnCollect
 }
 
 // CircuitConfig holds the per-target circuit-breaker thresholds
@@ -614,11 +628,13 @@ func applyEnvOverrides(cfg *Config) error {
 	} else if ok {
 		cfg.Signals.ExportPerCollectorFiles = b
 	}
-	// #350 — scheduled auto-export to a file location.
+	// #350/#403 — scheduled auto-export to a file location. The destination is
+	// the switch; SIGNALS_EXPORT_ON_COLLECT is an explicit opt-out override.
 	if b, ok, err := parseEnvBool("SIGNALS_EXPORT_ON_COLLECT"); err != nil {
 		return err
 	} else if ok {
-		cfg.Signals.ExportOnCollect = b
+		bb := b
+		cfg.Signals.ExportOnCollect = &bb
 	}
 	if v := os.Getenv("SIGNALS_EXPORT_DEST"); v != "" {
 		cfg.Signals.ExportDest = v
@@ -944,6 +960,14 @@ func ValidateStrict(cfg Config) (warnings []string, err error) {
 	}
 	if len(cfg.Targets) == 0 {
 		warnings = append(warnings, "no targets configured; the collector will start but have nothing to collect")
+	}
+	// #403 — the destination is the switch for the scheduled export. Catch the
+	// two mismatches so a misconfigured push is loud, not silent.
+	if cfg.Signals.ExportOnCollect != nil && *cfg.Signals.ExportOnCollect && cfg.Signals.ExportDest == "" {
+		warnings = append(warnings, "signals.export_on_collect is enabled but signals.export_dest is empty; nothing will be pushed — set export_dest (the destination is the switch)")
+	}
+	if cfg.Signals.ExportOnCollect != nil && !*cfg.Signals.ExportOnCollect && cfg.Signals.ExportDest != "" {
+		warnings = append(warnings, "signals.export_dest is set but signals.export_on_collect is false; the scheduled directory-push is suppressed (data is still available via GET /export)")
 	}
 	for i, t := range cfg.Targets {
 		if cfg.Env != "prod" && t.SSLMode == "prefer" {
