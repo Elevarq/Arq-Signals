@@ -388,9 +388,57 @@ The per-target fields for the non-`password` methods (`region`,
 
 ## Integrating with Existing Workflows
 
+### Getting data out: pull vs. push
+
+By default Elevarq Signals is **pull-based**: it collects and stores locally, and
+you fetch a snapshot ZIP on demand via `GET /export` or `signalsctl export`
+(see [Getting Started](#getting-started)). Nothing is written to a directory
+unless you ask for it.
+
+For a hands-off feed — for example to hand snapshots to a downstream watcher or
+the Elevarq Analyzer inbox — Signals can **push** a fresh ZIP per database to a
+directory after each collection cycle.
+
+### Scheduled export to a directory (opt-in)
+
+The **destination is the switch**: set `export_dest` (env `SIGNALS_EXPORT_DEST`)
+to a directory and Signals writes the latest snapshot for each database there
+after every collection cycle — and once immediately when it starts. No
+`export_dest` ⇒ pull-only (the default).
+
+```yaml
+signals:
+  export_dest: /var/lib/signals/exports   # enables the push
+  # export_on_collect: false              # explicit opt-out: keep a dest but suppress the push
+  # Bound the directory so it doesn't grow without limit (~288 files/db/day at a
+  # 5m cadence). 0 = unbounded (the default). Both may be set together.
+  export_retention_days: 7                 # delete ZIPs older than N days
+  export_max_files: 500                    # keep at most N ZIPs per database
+```
+
+Equivalent environment variables: `SIGNALS_EXPORT_DEST`,
+`SIGNALS_EXPORT_ON_COLLECT` (opt-out), `SIGNALS_EXPORT_RETENTION_DAYS`,
+`SIGNALS_EXPORT_MAX_FILES`.
+
+Notes:
+
+- **Latest, not the backlog.** Each cycle writes the *latest* snapshot per
+  database — one ZIP per database, named `<instance>-t<target>-<timestamp>.zip`.
+  Enabling the push does **not** replay previously collected snapshots; it
+  writes the current latest (immediately on enable) and each new latest going
+  forward. This is intentional — a consumer wants the current state, not a
+  replay of stale snapshots.
+- **Restart to enable.** The exporter is wired at startup. `POST /reload`
+  (SIGHUP) re-reads targets, not the export wiring — so turning the push on/off
+  takes effect on restart.
+- **Bounded + safe.** Pruning keeps only *this* instance's files per target, so
+  several instances writing to one shared directory never delete each other's
+  exports; a failed prune or export is logged and never disrupts collection.
+
 ### Scheduled Export via Cron
 
-Run Elevarq Signals as a daemon and export snapshots on a schedule:
+Prefer pull on a timer? Run Elevarq Signals as a daemon and export snapshots on
+a schedule instead:
 
 ```bash
 # Export a snapshot every hour

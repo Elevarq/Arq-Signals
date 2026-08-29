@@ -224,11 +224,13 @@ func run() error {
 		})
 	}
 
-	// #350: scheduled auto-export. When enabled, write the latest snapshot
-	// export ZIP to the configured file location after every collection
-	// cycle. A failed export logs and is skipped — it must never disrupt
-	// collection. Signals has no knowledge of any downstream consumer.
-	if cfg.Signals.ExportOnCollect && cfg.Signals.ExportDest != "" {
+	// #350/#403: scheduled auto-export. The destination is the switch — when
+	// export_dest is set (and not explicitly opted out via export_on_collect:
+	// false), write the latest snapshot ZIP per database to it after every
+	// cycle, and once immediately on enable. A failed export logs and is
+	// skipped — it must never disrupt collection. Signals has no knowledge of
+	// any downstream consumer.
+	if cfg.Signals.ScheduledExportEnabled() {
 		se := export.NewScheduledExporter(exporter, cfg.Signals.ExportDest, instanceID, nil, slog.Warn)
 		// #385 — bound the export directory (0/0 = unbounded, pre-#385 default).
 		se.SetRetention(cfg.Signals.ExportRetentionDays, cfg.Signals.ExportMaxFiles)
@@ -242,6 +244,18 @@ func run() error {
 			slog.Info("scheduled export written", "files", len(paths), "dest", cfg.Signals.ExportDest)
 		})
 		slog.Info("scheduled auto-export enabled (one file per database)", "dest", cfg.Signals.ExportDest, "cadence", "per collection cycle")
+		// #403 — populate the destination immediately with the current latest
+		// per target, so there is no up-to-one-poll-interval blind window when
+		// push is first enabled (e.g. a restart with data already in the store).
+		// Best-effort: a fresh install has nothing to export yet; a failure is
+		// logged and never blocks startup. Semantics are latest-per-target,
+		// NOT a backlog replay.
+		if paths, eerr := se.ExportLatest(ctx); eerr != nil {
+			slog.Warn("scheduled export: initial export failed; will retry next cycle",
+				"err", eerr.Error(), "dest", cfg.Signals.ExportDest)
+		} else if len(paths) > 0 {
+			slog.Info("scheduled export: initial export written", "files", len(paths), "dest", cfg.Signals.ExportDest)
+		}
 	}
 
 	// Start collector in background.
