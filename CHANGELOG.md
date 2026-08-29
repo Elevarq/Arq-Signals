@@ -8,6 +8,16 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Startup warning when an enabled target's connect host is **non-canonical** —
+  a loopback (`localhost` / `127.0.0.0/8` / `::1`) or a bare IP literal (#396).
+  The Analyzer keys database identity on `(lower(trim(host)):port, dbname)` with
+  the host echoed verbatim, so collecting the same database under a different
+  host string (e.g. its DNS endpoint from another Signals instance) produces a
+  second, unrecognized identity whose snapshots are silently held unprocessed.
+  Signals cannot know the canonical host, so the guard is advisory — but it
+  surfaces the split loudly at boot (target name + reason class only; never the
+  host value or credentials).
+
 - de-arq guard (CI): `scripts/check-no-legacy-arq.sh` is a baseline ratchet
   (replicated from Elevarq/Analyzer#2568) that blocks NEW legacy `arq` naming —
   case-insensitive `arq` at a word boundary (cleanly excludes `elevarq` and the

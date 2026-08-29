@@ -98,6 +98,24 @@ func run() error {
 	for _, t := range cfg.Targets {
 		if t.Enabled {
 			enabled++
+			// #396 — warn loudly when an enabled target's connect host is a
+			// non-canonical identity (loopback or a bare IP literal). The
+			// Analyzer keys database identity on (lower(trim(host)):port,
+			// dbname) with the host echoed verbatim, so collecting the same
+			// database under a different host string (e.g. its DNS endpoint
+			// elsewhere) yields a SECOND, unrecognized identity whose snapshots
+			// are silently held unprocessed. Signals can't know the canonical
+			// host, so this is advisory — but it would have caught the live
+			// split. Target name + reason class only, never the raw host value
+			// or credentials (consistent with the R078 no-leak discipline).
+			if reason := config.NonCanonicalHostReason(t.Host); reason != "" {
+				slog.Warn("target connect host is non-canonical; database identity may split at the Analyzer",
+					"target", t.Name,
+					"reason", reason,
+					"impact", "the Analyzer keys database identity on (host:port, dbname) with the host verbatim; the same database collected under a different host string becomes a second, unrecognized identity and its snapshots are held unprocessed (Elevarq/Signals#396)",
+					"fix", "configure the canonical connect host — the same hostname the database is registered under elsewhere (e.g. the DNS endpoint), not a loopback/tunnel address or a resolved IP",
+				)
+			}
 		} else {
 			disabled++
 		}
