@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -40,6 +41,10 @@ type ScheduledExporter struct {
 	instanceID string
 	now        func() time.Time
 	logf       func(msg string, args ...any)
+	// Retention bounds for the export directory (#385). Zero = unbounded
+	// (the pre-#385 behaviour). Set via SetRetention.
+	retentionDays int
+	maxFiles      int
 }
 
 // NewScheduledExporter constructs the exporter. `dest` is the destination
@@ -54,6 +59,59 @@ func NewScheduledExporter(b snapshotSource, dest, instanceID string, now func() 
 		logf = func(string, ...any) {}
 	}
 	return &ScheduledExporter{builder: b, dest: dest, instanceID: instanceID, now: now, logf: logf}
+}
+
+// SetRetention bounds the export directory (#385): after each cycle the
+// exporter prunes its OWN older ZIPs per target — keeping at most maxFiles
+// (when > 0) and deleting any older than retentionDays (when > 0). Zero for
+// both is unbounded (the pre-#385 behaviour). Only this instance's files
+// (`<instance>-t<target>-*.zip`) are pruned, so several instances sharing one
+// directory never delete each other's exports.
+func (e *ScheduledExporter) SetRetention(retentionDays, maxFiles int) {
+	e.retentionDays = retentionDays
+	e.maxFiles = maxFiles
+}
+
+// pruneTarget deletes this instance's older export ZIPs for one target so the
+// scheduled-export directory stays bounded (#385). It keeps the newest
+// maxFiles and deletes any older than retentionDays; both bounds apply when
+// set. Best-effort — a failed unlink is logged and never fails the export
+// (the fresh ZIP for this cycle is already durably written). The per-target
+// timestamped filename sorts lexicographically == chronologically, so the tail
+// of the sorted list is the newest.
+func (e *ScheduledExporter) pruneTarget(targetID int64) {
+	if e.retentionDays <= 0 && e.maxFiles <= 0 {
+		return // unbounded
+	}
+	inst := instanceToken.ReplaceAllString(strings.TrimSpace(e.instanceID), "_")
+	if inst == "" {
+		inst = "signals"
+	}
+	matches, err := filepath.Glob(filepath.Join(e.dest, fmt.Sprintf("%s-t%d-*.zip", inst, targetID)))
+	if err != nil || len(matches) == 0 {
+		return
+	}
+	sort.Strings(matches) // oldest first (timestamp in the name)
+
+	remove := make(map[string]bool)
+	if e.maxFiles > 0 && len(matches) > e.maxFiles {
+		for _, p := range matches[:len(matches)-e.maxFiles] {
+			remove[p] = true
+		}
+	}
+	if e.retentionDays > 0 {
+		cutoff := e.now().Add(-time.Duration(e.retentionDays) * 24 * time.Hour)
+		for _, p := range matches {
+			if info, serr := os.Stat(p); serr == nil && info.ModTime().Before(cutoff) {
+				remove[p] = true
+			}
+		}
+	}
+	for p := range remove {
+		if rerr := os.Remove(p); rerr != nil {
+			e.logf("scheduled export: prune %s failed (%v); leaving it in place", filepath.Base(p), rerr)
+		}
+	}
 }
 
 // instanceToken keeps the filename component filesystem-safe and flat.
@@ -102,6 +160,7 @@ func (e *ScheduledExporter) ExportLatest(_ context.Context) ([]string, error) {
 			return written, fmt.Errorf("scheduled export: target %d: %w", id, err)
 		}
 		written = append(written, final)
+		e.pruneTarget(id) // #385 — bound the dir; best-effort, never fails the export
 	}
 	return written, nil
 }

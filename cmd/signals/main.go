@@ -230,6 +230,8 @@ func run() error {
 	// collection. Signals has no knowledge of any downstream consumer.
 	if cfg.Signals.ExportOnCollect && cfg.Signals.ExportDest != "" {
 		se := export.NewScheduledExporter(exporter, cfg.Signals.ExportDest, instanceID, nil, slog.Warn)
+		// #385 — bound the export directory (0/0 = unbounded, pre-#385 default).
+		se.SetRetention(cfg.Signals.ExportRetentionDays, cfg.Signals.ExportMaxFiles)
 		coll.SetAfterCycle(func(ctx context.Context) {
 			paths, err := se.ExportLatest(ctx)
 			if err != nil {
