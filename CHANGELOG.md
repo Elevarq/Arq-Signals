@@ -6,6 +6,17 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- de-arq guard (CI): `scripts/check-no-legacy-arq.sh` is a baseline ratchet
+  (replicated from Elevarq/Analyzer#2568) that blocks NEW legacy `arq` naming —
+  case-insensitive `arq` at a word boundary (cleanly excludes `elevarq` and the
+  `de-arq`/`legacy-arq` tooling vocabulary), compared per-file against the
+  committed `scripts/de-arq-baseline.txt`; it fails if any file's count rises or
+  a new file appears. Wired as the `no-legacy-arq` preflight subcommand and a CI
+  gate. The baseline (44 files) is frozen; burning it down is follow-on work.
+  (#398)
+
 ### Fixed
 
 - Flaky `integration-pg` output-contract test: the `pg_stat_progress_*` family
