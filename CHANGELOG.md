@@ -15,8 +15,6 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   latest snapshot per database **immediately** (no up-to-one-poll-interval blind
   window); semantics stay latest-per-target, not a backlog replay. The push
   path + the #385 retention knobs are now documented in the adoption guide.
-
-### Changed
 - Neutralized historical AI-tool-name references ("Codex") in committed
   artifacts per the no-AI-attribution engineering standard (#392): renamed
   `tests/signals_codex_post_031_test.go` -> `tests/signals_post_031_test.go`
@@ -26,6 +24,13 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- New collector `wal_archiving_v1` (#304): WAL-archiving and backup-readiness
+  signals from `pg_stat_archiver` (archived/failed counts, last archived/failed
+  WAL + times, stats_reset) plus recovery-posture settings (`archive_mode`,
+  `archive_timeout`, `wal_level`) and **presence-only** flags for
+  `archive_command` / `restore_command`. Read-only, one row per cluster, 15m
+  cadence. Credential-safe: the archive/restore command strings are never
+  persisted — only a boolean indicating whether each is configured.
 - Bounded retention for the scheduled auto-export directory (#385, #350
   follow-up). `SIGNALS_EXPORT_RETENTION_DAYS` / `export_retention_days` and
   `SIGNALS_EXPORT_MAX_FILES` / `export_max_files` cap the per-target ZIPs the
