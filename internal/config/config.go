@@ -76,6 +76,14 @@ type SignalsConfig struct {
 	// scope for Signals.
 	ExportOnCollect bool   `yaml:"export_on_collect"`
 	ExportDest      string `yaml:"export_dest"`
+	// #385: bound the scheduled-export directory so it does not grow without
+	// limit (one ZIP per database per cycle, ~288/db/day at a 5m cadence).
+	// After each cycle the exporter prunes its own older ZIPs per target:
+	// keeping at most ExportMaxFiles (when > 0) and deleting any older than
+	// ExportRetentionDays (when > 0). Both default 0 = unbounded (the pre-#385
+	// behaviour), so existing deployments are unaffected until they opt in.
+	ExportRetentionDays int `yaml:"export_retention_days"`
+	ExportMaxFiles      int `yaml:"export_max_files"`
 }
 
 // CircuitConfig holds the per-target circuit-breaker thresholds
@@ -614,6 +622,17 @@ func applyEnvOverrides(cfg *Config) error {
 	}
 	if v := os.Getenv("SIGNALS_EXPORT_DEST"); v != "" {
 		cfg.Signals.ExportDest = v
+	}
+	// #385 — bound the scheduled-export directory (0 = unbounded).
+	if n, ok, err := parseEnvInt("SIGNALS_EXPORT_RETENTION_DAYS"); err != nil {
+		return err
+	} else if ok {
+		cfg.Signals.ExportRetentionDays = n
+	}
+	if n, ok, err := parseEnvInt("SIGNALS_EXPORT_MAX_FILES"); err != nil {
+		return err
+	} else if ok {
+		cfg.Signals.ExportMaxFiles = n
 	}
 	// File takes precedence over the raw env var when both are set —
 	// matches the _FILE convention used by the official postgres image.

@@ -16,6 +16,14 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Bounded retention for the scheduled auto-export directory (#385, #350
+  follow-up). `SIGNALS_EXPORT_RETENTION_DAYS` / `export_retention_days` and
+  `SIGNALS_EXPORT_MAX_FILES` / `export_max_files` cap the per-target ZIPs the
+  export-on-collect writer accumulates (~288/db/day at a 5m cadence): after
+  each cycle the exporter prunes its OWN older ZIPs per target — keeping at
+  most `max_files` and deleting any older than `retention_days`. Both default 0
+  = unbounded (pre-#385 behaviour); instances sharing one directory never
+  delete each other's exports. Pruning is best-effort and never fails a cycle.
 - Startup warning when an enabled target's connect host is **non-canonical** —
   a loopback (`localhost` / `127.0.0.0/8` / `::1`) or a bare IP literal (#396).
   The Analyzer keys database identity on `(lower(trim(host)):port, dbname)` with
