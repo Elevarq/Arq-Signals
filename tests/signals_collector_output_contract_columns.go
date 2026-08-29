@@ -30,12 +30,13 @@ import (
 	"testing"
 )
 
-// dynamicColumnCollectors emit a version-dependent column set via
-// SELECT * (documented in their specs as R037 dynamic-column precedent),
-// so a fixed declared-column list cannot be asserted. Their row-presence
-// and char/status invariants are still covered by the ALL-payload
-// sweeps (OC-R003/R004/R005). Each entry carries the reason it is
-// column-dynamic.
+// dynamicColumnCollectors emit a version-dependent column set — either via
+// SELECT * (documented in their specs as R037 dynamic-column precedent) or,
+// for the pg_stat_progress_* family, via explicit per-major column
+// projections populated by RegisterOverride — so a fixed declared-column
+// list cannot be asserted. Their row-presence and char/status invariants are
+// still covered by the ALL-payload sweeps (OC-R003/R004/R005). Each entry
+// carries the reason it is column-dynamic.
 var dynamicColumnCollectors = map[string]string{
 	"pg_version_v1":                        "scalar SELECT version(); single value keyed by the version() output column, no fixed column table",
 	"bgwriter_stats_v1":                    "spec-documented dynamic: whatever pg_stat_bgwriter exposes on the target (PG 17 split checkpoints into pg_stat_checkpointer, so the pre-17 columns are absent)",
@@ -51,6 +52,21 @@ var dynamicColumnCollectors = map[string]string{
 	"timescaledb_compression_settings_v1":  "SELECT * over compression_settings; column set drifts across TimescaleDB versions",
 	"timescaledb_compression_stats_v1":     "SELECT * over compression stats; column set drifts across TimescaleDB versions",
 	"timescaledb_hypertable_sizes_v1":      "SELECT * over hypertable sizes; column set drifts across TimescaleDB versions",
+	// pg_stat_progress_* family (#383): columns are per-major (RegisterOverride
+	// populates version-specific columns) and are documented inline at the
+	// registration site rather than in a spec table — pg_stat_progress_family_v1.md
+	// deliberately carries no "## Output columns" table to avoid spec/code drift.
+	// So there is no fixed declared-column list to assert; row-presence + the
+	// ALL-payload char/status sweeps cover them. Without this classification the
+	// resolver looked for a non-existent per-collector <id>.md and Fatal'd
+	// whenever a progress row happened to be sampled (a flake, since a row only
+	// appears while the operation is in flight).
+	"pg_stat_progress_analyze_v1":      "progress-family: per-major projected columns, documented in code per pg_stat_progress_family_v1.md (no spec column table)",
+	"pg_stat_progress_basebackup_v1":   "progress-family: per-major projected columns, documented in code per pg_stat_progress_family_v1.md (no spec column table)",
+	"pg_stat_progress_cluster_v1":      "progress-family: per-major projected columns, documented in code per pg_stat_progress_family_v1.md (no spec column table)",
+	"pg_stat_progress_copy_v1":         "progress-family: per-major projected columns, documented in code per pg_stat_progress_family_v1.md (no spec column table)",
+	"pg_stat_progress_create_index_v1": "progress-family: per-major projected columns, documented in code per pg_stat_progress_family_v1.md (no spec column table)",
+	"pg_stat_progress_vacuum_v1":       "progress-family: per-major projected columns, documented in code per pg_stat_progress_family_v1.md (no spec column table)",
 }
 
 // zeroRowAllowlist enumerates the collectors that legitimately emit no

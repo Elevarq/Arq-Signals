@@ -6,6 +6,19 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Flaky `integration-pg` output-contract test: the `pg_stat_progress_*` family
+  collectors share one family spec (`pg_stat_progress_family_v1.md`) that
+  intentionally carries no `## Output columns` table (their columns are
+  per-major, populated by `RegisterOverride`, documented inline at the
+  registration site). The resolver derived a per-collector `<id>.md` path that
+  does not exist and failed whenever a progress row was sampled — a flake,
+  since a progress row only appears while the operation is in flight. The six
+  progress collectors are now classified column-dynamic (row-presence only,
+  consistent with the family spec), and a deterministic regression asserts
+  every `pg_stat_progress_*` collector stays classified. (#383)
+
 ## [1.3.0] - 2026-08-17
 
 ### Added
