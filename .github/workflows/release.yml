@@ -84,7 +84,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       - name: Lint Dockerfile with hadolint
-        uses: hadolint/hadolint-action@2a66e89f53d0771bb131a7fa31f3136336094aa6  # v3.4.0
+        uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387  # v3.5.0
         with:
           dockerfile: Dockerfile
           failure-threshold: error
@@ -309,7 +309,7 @@ jobs:
       # SBOM (sbom: true above) — the file artifact lets consumers
       # download the SBOM without pulling the image at all.
       - name: Generate SBOM artifact (file)
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610  # v0
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26  # v0.24.2
         with:
           image: ${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}
           format: spdx-json
